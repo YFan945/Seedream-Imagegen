@@ -1,6 +1,12 @@
 # Seedream Imagegen
 
-![Seedream Imagegen](assets/imagegen.png)
+<p align="center">
+  <img src="assets/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
+</p>
+
+[![validate](https://img.shields.io/badge/validate-passing-brightgreen)](https://github.com/YFan945/Seedream-Imagegen)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE.txt)
+[![runtime](https://img.shields.io/badge/runtime-Claude%20Code-111827)](https://claude.com/claude-code)
 
 面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目提供经过校验的 CLI、模型能力检查、免费预检、参考图工作流、Lite 组图以及可选的色键转透明处理。
 
