@@ -1,7 +1,7 @@
 # Seedream Imagegen
 
 <p align="center">
-  <img src="assets/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
+  <img src="logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
 [![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)
@@ -10,7 +10,9 @@
 
 面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、请求状态恢复、原子保存、Lite 组图和可选色键转透明。
 
-品牌资产：横向 README 横幅为 [`assets/seedream-imagegen-logo.png`](assets/seedream-imagegen-logo.png)，无文字方形 skill 图标为 [`assets/seedream-imagegen-icon.png`](assets/seedream-imagegen-icon.png)。两者仅用于仓库展示，不作为模型输入或生成结果。
+品牌资产：横向 README 横幅为 [`logo/seedream-imagegen-logo.png`](logo/seedream-imagegen-logo.png)，无文字方形 skill 图标为 [`logo/seedream-imagegen-icon.png`](logo/seedream-imagegen-icon.png)。两者仅用于仓库展示，不作为模型输入或生成结果。
+
+可选视觉参考位于 [`assets/examples/`](assets/examples/)，使用说明与完整 prompt 见 [`references/visual-examples.md`](references/visual-examples.md)。仅在任务需要相应视觉方向时使用。
 
 英文文档：[README.md](README.md)
 

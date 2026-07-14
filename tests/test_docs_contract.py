@@ -43,6 +43,39 @@ def test_relative_markdown_links_and_assets_exist():
     assert not missing, "失效 Markdown 链接：\n" + "\n".join(missing)
 
 
+def test_visual_examples_are_documented_and_valid_images():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    reference = (ROOT / "references" / "visual-examples.md").read_text(
+        encoding="utf-8"
+    )
+    expected = [
+        "photorealistic-natural.png",
+        "product-mockup.png",
+        "infographic-diagram.png",
+        "illustration-story.png",
+    ]
+    assert "references/visual-examples.md" in skill
+    for filename in expected:
+        path = ROOT / "assets" / "examples" / filename
+        assert f"../assets/examples/{filename}" in reference
+        assert path.stat().st_size > 0
+        with Image.open(path) as opened:
+            opened.verify()
+        with Image.open(path) as opened:
+            assert opened.width > 0 and opened.height > 0
+            assert opened.width > opened.height
+
+
+def test_brand_assets_live_outside_visual_examples():
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README-zh.md").read_text(encoding="utf-8")
+    for filename in ("seedream-imagegen-logo.png", "seedream-imagegen-icon.png"):
+        assert (ROOT / "logo" / filename).is_file()
+        assert not (ROOT / "assets" / filename).exists()
+        for readme in (english, chinese):
+            assert f"logo/{filename}" in readme
+
+
 def test_runtime_docs_never_use_bare_repository_script_paths():
     runtime_docs = [ROOT / "SKILL.md", *(ROOT / "references").glob("*.md")]
     pattern = re.compile(r"python\s+(?:scripts|<SKILL_DIR>)[\\/]")
@@ -95,7 +128,7 @@ def test_ci_workflow_covers_supported_python_and_release_gates():
 
 
 def test_readme_logo_is_cropped_and_reasonably_compressed():
-    path = ROOT / "assets" / "seedream-imagegen-logo.png"
+    path = ROOT / "logo" / "seedream-imagegen-logo.png"
     assert path.stat().st_size < 500_000
     with Image.open(path) as opened:
         image = opened.convert("RGB")

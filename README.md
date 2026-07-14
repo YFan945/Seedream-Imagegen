@@ -1,7 +1,7 @@
 # Seedream Imagegen
 
 <p align="center">
-  <img src="assets/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
+  <img src="logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
 [![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)
@@ -10,7 +10,9 @@
 
 A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, request-state recovery, atomic saves, Lite image sets, and optional chroma-key conversion.
 
-Brand assets: the wide README banner is [`assets/seedream-imagegen-logo.png`](assets/seedream-imagegen-logo.png); the text-free square skill icon is [`assets/seedream-imagegen-icon.png`](assets/seedream-imagegen-icon.png). They are repository presentation assets, not generation inputs or outputs.
+Brand assets: the wide README banner is [`logo/seedream-imagegen-logo.png`](logo/seedream-imagegen-logo.png); the text-free square skill icon is [`logo/seedream-imagegen-icon.png`](logo/seedream-imagegen-icon.png). They are repository presentation assets, not generation inputs or outputs.
+
+Optional visual references live in [`assets/examples/`](assets/examples/) with usage guidance and complete prompts in [`references/visual-examples.md`](references/visual-examples.md). They are used only when the requested visual direction calls for them.
 
 > 中文文档：[README-zh.md](README-zh.md)
 

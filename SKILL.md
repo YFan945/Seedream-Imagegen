@@ -19,7 +19,8 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 ## 资源与交付约定
 
-- `assets/seedream-imagegen-logo.png` 是 README 横幅；`assets/seedream-imagegen-icon.png` 是无文字方形 skill 图标。两者仅用于项目品牌展示，不作为模型参考图或生成结果提交。
+- `assets/examples/` 存放可选视觉参考；仅在用户要求相应视觉方向、典型效果或参考图时读取 `references/visual-examples.md`。需要实际作为模型输入时，经用户选择后把对应图片传给 `--image` 并标为「风格参考」；不得默认注入请求或照搬具体主体、场景、构图和文字。
+- `logo/seedream-imagegen-logo.png` 是 README 横幅；`logo/seedream-imagegen-icon.png` 是无文字方形 skill 图标。两者仅用于项目品牌展示，不作为模型参考图或生成结果提交。
 - 单张最终图默认保存到项目根目录；Lite 组图默认保存到项目 `images/`。生成图片、`images/`、`output/`、缓存、`.env` 和请求状态文件不得提交 Git。
 - 生成或改写的多行 prompt 临时文件只能使用项目根目录 `.seedream-prompt-<random-id>.txt`，并遵循下文的清理与状态保护规则。
 
@@ -138,6 +139,7 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 - `references/prompting.md`：提示词结构、分类、文字、参考图、编辑、透明背景与验收。
 - `references/sample-prompts.md`：可复制的生成、编辑、标记、组图和联网模板。
+- `references/visual-examples.md`：四类典型视觉参考、完整 prompt、适用场景和引用限制。
 - `references/cli.md`：CLI、端点、配置、输入/输出、dry-run 与失败恢复。
 - `references/chroma-key.md`：色键 CLI、alpha、格式、失败恢复和轻量交付检查。
 - `references/lite.md`：Lite 能力、API payload、尺寸、组图、联网与 SSE。

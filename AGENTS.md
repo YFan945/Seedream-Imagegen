@@ -7,8 +7,10 @@
 - `scripts/image_gen.py`：Doubao Seedream 5.0 Lite/Pro 的受校验 CLI；不要以临时 SDK 脚本替代它。
 - `scripts/remove_chroma_key.py`：将均匀色键背景转换为透明 alpha。
 - `tests/`：`pytest` 单元测试，分别覆盖 CLI 与色键处理。
-- `references/`：模型能力、CLI、提示词和模板文档；修改流程或参数时同步更新对应文件。
-- `assets/`：skill 图标资源。单图默认放在当前项目根目录，以清理后的 prompt 命名；组图默认放在 `images/`；不得提交 `.env`、缓存或请求状态文件。
+- `references/`：模型能力、CLI、提示词、模板和视觉示例说明；修改流程或参数时同步更新对应文件。
+- `assets/examples/`：按需使用的典型视觉参考，不是默认模型输入；新增或调整图片时同步更新 `references/visual-examples.md`。
+- `logo/`：README 横幅和方形 skill 图标，仅用于项目品牌展示。
+- 单图默认放在当前项目根目录，以清理后的 prompt 命名；组图默认放在 `images/`；不得提交 `.env`、缓存或请求状态文件。
 - `README.md`：GitHub 英文入口，包含安装、配置和使用条件。
 - `README-zh.md`：GitHub 中文入口。
 
