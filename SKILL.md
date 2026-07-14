@@ -7,6 +7,22 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 使用 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 生成或编辑位图；默认从本 skill 根目录 `.env` 读取 Ark 配置。本 skill 只有 `generate` 和 `edit` 两类任务：按用户意图选择，不要用参考图是否存在来代替判断。所有真实请求经该统一 CLI 发往 `POST <ARK_BASE_URL>/images/generations`；不得创建临时 SDK/HTTP 脚本或修改 CLI。
 
+## 快速执行准则
+
+每次任务按以下顺序处理，避免把能力选择、真实请求与迭代混在一起：
+
+1. 先判定是否需要联网，再按「模型选择」决定 Lite、Pro 或向用户询问；不得擅自替换用户已选模型。
+2. 再判定是 `generate` 还是 `edit`，为每张输入图标注角色，并收集逐字文字、不变项、禁止项和交付路径。
+3. 只读取当前决策所需的参考：模型能力看 `references/lite.md` 或 `references/pro.md`；提示词规则看 `references/prompting.md`；命令与恢复细节看 `references/cli.md`；透明背景看 `references/chroma-key.md`。
+4. 首次真实请求可按已确认任务执行；此后的任何 POST 都是新一次可能计费的请求，必须先取得用户授权。`pending` 或 `ambiguous` 一律停止，先由用户核实状态。
+5. 交付前实际查看输出，确认尺寸、格式、主体、文字、编辑不变项和禁止项；报告模型、完整 prompt 与绝对输出路径。
+
+## 资源与交付约定
+
+- `assets/seedream-imagegen-logo.png` 是 README 横幅；`assets/seedream-imagegen-icon.png` 是无文字方形 skill 图标。两者仅用于项目品牌展示，不作为模型参考图或生成结果提交。
+- 单张最终图默认保存到项目根目录；Lite 组图默认保存到项目 `images/`。生成图片、`images/`、`output/`、缓存、`.env` 和请求状态文件不得提交 Git。
+- 生成或改写的多行 prompt 临时文件只能使用项目根目录 `.seedream-prompt-<random-id>.txt`，并遵循下文的清理与状态保护规则。
+
 ## 模型选择（保持此询问方式）
 
 先判断是否需要模型原生联网，再检查用户是否已明确选择模型：
@@ -111,7 +127,7 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 ## 安全与配置
 
-- skill-local `.env` 只覆盖本次 CLI 使用的配置对象，不修改 `os.environ`、Windows 环境或 `.env` 文件。
+- 配置优先级为进程环境、skill-local `.env`、CLI 内置默认值；`ARK_BASE_URL`、`ARK_PRO_MODEL`、`ARK_LITE_MODEL` 仅在自定义 endpoint 或 Model ID 时配置。Model ID 覆盖不改变对应 Pro/Lite 的本地能力校验。skill-local `.env` 只进入本次 CLI 配置对象，不修改 `os.environ`、Windows 环境或 `.env` 文件。
 - 不要求用户在对话中提供 `ARK_API_KEY`，也不得打印密钥、Base64 输入图、签名 URL 或未经脱敏的 API 响应。
 - 生图 POST 可能计费且不自动重试；超时、中断或断连后，先检查输出与对应的 `.seedream-request.json` 状态文件。默认组图状态按提示词隔离，避免不同组图互相阻塞。
 - `--dry-run` 仅在命令显式包含该参数时生效，不提交请求，可报告输出冲突和未知请求状态；CLI 不会根据 prompt、输出路径或 `--web-search` 隐式开启。真实请求出现 `pending` 或 `ambiguous` 状态必须停止。

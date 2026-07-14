@@ -14,7 +14,7 @@
 
 ## 固定能力
 
-- Payload Model ID：`doubao-seedream-5-0-260128`。
+- 默认 Payload Model ID：`doubao-seedream-5-0-260128`；可用 `ARK_LITE_MODEL` 覆盖，但不改变本页能力校验。
 - CLI 兼容别名：`doubao-seedream-5-0-lite-260128`；发送前统一为首选 ID。
 - 支持文生图、单/多图编辑和融合、组图、联网搜索、流式输出。
 - 最多 14 张参考图；参考图数量 + 计划输出数量不超过 15。

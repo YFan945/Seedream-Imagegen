@@ -85,7 +85,7 @@ def test_ci_workflow_covers_supported_python_and_release_gates():
     text = workflow_path.read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
     matrix = parsed["jobs"]["validate"]["strategy"]["matrix"]
-    assert matrix["os"] == ["ubuntu-latest", "windows-latest"]
+    assert matrix["os"] == ["ubuntu-latest", "windows-latest", "macos-latest"]
     assert matrix["python-version"] == ["3.10", "3.11", "3.12", "3.13"]
     assert "python -m pytest -q" in text
     assert "python -m compileall -q scripts tests" in text

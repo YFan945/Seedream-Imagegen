@@ -178,6 +178,25 @@ class ImageGenTests(unittest.TestCase):
         self.assertEqual([{"type": "web_search"}], payload["tools"])
         self.assertIs(payload["stream"], True)
 
+    def test_configured_model_ids_override_payload_without_changing_tier_rules(self):
+        config = image_gen.ArkConfig(
+            api_key="test-key",
+            base_url=image_gen.DEFAULT_BASE_URL,
+            sources={},
+            pro_model="custom-pro-model",
+            lite_model="custom-lite-model",
+        )
+        for tier, configured_model in (
+            ("pro", "custom-pro-model"),
+            ("lite", "custom-lite-model"),
+        ):
+            with self.subTest(tier=tier):
+                args = self.make_args(model=tier)
+                image_gen.validate_args(args, config)
+                self.assertEqual(configured_model, image_gen.build_payload(args)["model"])
+                profile, _ = image_gen.resolve_model(configured_model, config=config)
+                self.assertEqual(tier, profile.tier)
+
     def test_cli_default_output_uses_a_prompt_derived_png_name(self):
         parser = argparse.ArgumentParser()
         image_gen.add_common_args(parser)
@@ -301,11 +320,15 @@ class ImageGenTests(unittest.TestCase):
         self.assertIn("HTTP 400、内容审核、敏感内容", skill)
         self.assertIn("内容审核明确拒绝后改写 prompt", skill)
 
-    def test_skill_local_env_overrides_process_without_mutating_environment_or_file(self):
+    def test_process_env_overrides_skill_local_without_mutating_environment_or_file(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text(
-                "ARK_API_KEY=local-key\nARK_BASE_URL=https://local.example/api/v3\nIGNORED=x\n",
+                "ARK_API_KEY=local-key\n"
+                "ARK_BASE_URL=https://local.example/api/v3\n"
+                "ARK_PRO_MODEL=local-pro\n"
+                "ARK_LITE_MODEL=local-lite\n"
+                "IGNORED=x\n",
                 encoding="utf-8",
             )
             before = env_path.read_bytes()
@@ -315,35 +338,60 @@ class ImageGenTests(unittest.TestCase):
                 {
                     "ARK_API_KEY": "process-key",
                     "ARK_BASE_URL": "https://process.example/api/v3",
+                    "ARK_PRO_MODEL": "process-pro",
+                    "ARK_LITE_MODEL": "process-lite",
                     "IGNORED": "process-value",
                 },
                 clear=False,
             ):
                 config = image_gen.load_config(env_path)
-                self.assertEqual("local-key", config.api_key)
-                self.assertEqual("https://local.example/api/v3", config.base_url)
+                self.assertEqual("process-key", config.api_key)
+                self.assertEqual("https://process.example/api/v3", config.base_url)
+                self.assertEqual("process-pro", config.pro_model)
+                self.assertEqual("process-lite", config.lite_model)
                 self.assertEqual("process-key", os.environ["ARK_API_KEY"])
                 self.assertEqual("https://process.example/api/v3", os.environ["ARK_BASE_URL"])
                 self.assertEqual("process-value", os.environ["IGNORED"])
-                self.assertEqual("skill-local .env", config.sources["ARK_API_KEY"])
-                self.assertEqual("skill-local .env", config.sources["ARK_BASE_URL"])
+                self.assertEqual("process environment", config.sources["ARK_API_KEY"])
+                self.assertEqual("process environment", config.sources["ARK_BASE_URL"])
+                self.assertEqual("process environment", config.sources["ARK_PRO_MODEL"])
+                self.assertEqual("process environment", config.sources["ARK_LITE_MODEL"])
             self.assertEqual(before, env_path.read_bytes())
             self.assertEqual(before_mtime, env_path.stat().st_mtime_ns)
 
-    def test_skill_local_env_missing_value_falls_back_to_process(self):
+    def test_missing_process_value_falls_back_to_skill_local_env(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text("ARK_API_KEY=local-key\n", encoding="utf-8")
-            with mock.patch.dict(
-                os.environ,
-                {"ARK_API_KEY": "process-key", "ARK_BASE_URL": "https://process.example/api/v3"},
-                clear=False,
-            ):
-                config = image_gen.load_config(env_path)
-                self.assertEqual("local-key", config.api_key)
-                self.assertEqual("process-key", os.environ["ARK_API_KEY"])
-                self.assertEqual("https://process.example/api/v3", config.base_url)
-                self.assertEqual("process environment", config.sources["ARK_BASE_URL"])
+            config = image_gen.load_config(
+                env_path,
+                environ={"ARK_BASE_URL": "https://process.example/api/v3"},
+            )
+            self.assertEqual("local-key", config.api_key)
+            self.assertEqual("https://process.example/api/v3", config.base_url)
+            self.assertEqual("skill-local .env", config.sources["ARK_API_KEY"])
+            self.assertEqual("process environment", config.sources["ARK_BASE_URL"])
+
+    def test_skill_local_env_accepts_utf8_bom_and_uses_default_base_url(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("ARK_API_KEY=local-key\n", encoding="utf-8-sig")
+            config = image_gen.load_config(env_path, environ={})
+            self.assertEqual("local-key", config.api_key)
+            self.assertEqual(image_gen.DEFAULT_BASE_URL, config.base_url)
+            self.assertEqual(image_gen.PRO_MODEL, config.pro_model)
+            self.assertEqual(image_gen.LITE_MODEL, config.lite_model)
+            self.assertEqual("skill-local .env", config.sources["ARK_API_KEY"])
+            self.assertEqual("default", config.sources["ARK_BASE_URL"])
+            self.assertEqual("default", config.sources["ARK_PRO_MODEL"])
+            self.assertEqual("default", config.sources["ARK_LITE_MODEL"])
+
+    def test_invalid_configured_model_id_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("ARK_PRO_MODEL=invalid model\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                image_gen.load_config(env_path, environ={})
 
     def test_module_reload_does_not_read_env_or_mutate_environment(self):
         before = {key: os.environ.get(key) for key in image_gen.ENV_KEYS}
@@ -1136,10 +1184,12 @@ class ImageGenTests(unittest.TestCase):
 
     def test_windows_reserved_output_name_is_rejected_on_all_platforms(self):
         with TemporaryDirectory() as directory:
-            args = self.make_args(out=str(Path(directory) / "CON.png"))
-            image_gen.validate_args(args)
-            with self.assertRaises(SystemExit):
-                image_gen.build_output_plan(args)
+            for relative in ("CON.png", "CON.extra.png", "bad:name.png", "bad./result.png"):
+                with self.subTest(relative=relative):
+                    args = self.make_args(out=str(Path(directory) / relative))
+                    image_gen.validate_args(args)
+                    with self.assertRaises(SystemExit):
+                        image_gen.build_output_plan(args)
 
     def test_atomic_write_no_clobber_preserves_concurrent_output(self):
         with TemporaryDirectory() as directory:

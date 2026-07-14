@@ -4,7 +4,7 @@
 
 ## 固定能力
 
-- Model ID：`doubao-seedream-5-0-pro-260628`。
+- 默认 Model ID：`doubao-seedream-5-0-pro-260628`；可用 `ARK_PRO_MODEL` 覆盖 payload Model ID，但不改变本页能力校验。
 - 支持文生图、单图编辑、多图融合和坐标点、圈选、涂鸦、草图等标记交互编辑。
 - 仅单图输出；最多 10 张参考图。
 - 支持 1K、2K 或合法自定义尺寸；不支持 3K/4K。

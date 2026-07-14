@@ -7,7 +7,7 @@ import argparse
 import base64
 import binascii
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
@@ -54,13 +54,14 @@ MAX_ASPECT_RATIO = 16
 MAX_INPUT_PIXELS = 36_000_000
 MIN_SEED = -(2**31)
 MAX_SEED = 2**31 - 1
-ENV_KEYS = ("ARK_API_KEY", "ARK_BASE_URL")
+ENV_KEYS = ("ARK_API_KEY", "ARK_BASE_URL", "ARK_PRO_MODEL", "ARK_LITE_MODEL")
 API_KEY_PLACEHOLDERS = frozenset(
     {"your api key", "your-api-key", "replace-me", "changeme", "<api-key>"}
 )
 WINDOWS_RESERVED_STEMS = frozenset(
     {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 )
+PORTABLE_INVALID_PATH_CHARS = frozenset('<>:"/\\|?*')
 ROOT_PROMPT_NAME_PATTERN = re.compile(
     r"^\.seedream-prompt-[A-Za-z0-9][A-Za-z0-9_-]{5,63}\.txt$"
 )
@@ -158,6 +159,8 @@ class ArkConfig:
     api_key: str
     base_url: str
     sources: dict[str, str]
+    pro_model: str = PRO_MODEL
+    lite_model: str = LITE_MODEL
 
 
 class ArkRequestError(RuntimeError):
@@ -174,14 +177,12 @@ def load_config(
     """Read Ark configuration without mutating the process environment."""
     env_path = path or ENV_FILE
     process_env = os.environ if environ is None else environ
-    values = {key: process_env.get(key, "").strip() for key in ENV_KEYS}
-    sources = {
-        key: "process environment" if values[key] else "unset"
-        for key in ENV_KEYS
-    }
+    values = {key: "" for key in ENV_KEYS}
+    sources = {key: "unset" for key in ENV_KEYS}
     if env_path.exists():
         try:
-            lines = env_path.read_text(encoding="utf-8").splitlines()
+            # utf-8-sig 同时兼容普通 UTF-8 与 Windows 编辑器常见的 UTF-8 BOM。
+            lines = env_path.read_text(encoding="utf-8-sig").splitlines()
         except (OSError, UnicodeError) as exc:
             raise RuntimeError(f"无法读取 skill-local .env：{env_path}（{exc}）") from None
         for raw in lines:
@@ -194,12 +195,23 @@ def load_config(
             if key in ENV_KEYS and value:
                 values[key] = value
                 sources[key] = "skill-local .env"
-    if sources["ARK_BASE_URL"] == "unset":
-        sources["ARK_BASE_URL"] = "default"
+    # 进程环境优先，便于 CI、容器和不同电脑在不改安装目录的情况下覆盖配置。
+    for key in ENV_KEYS:
+        process_value = process_env.get(key, "").strip()
+        if process_value:
+            values[key] = process_value
+            sources[key] = "process environment"
+    for key in ("ARK_BASE_URL", "ARK_PRO_MODEL", "ARK_LITE_MODEL"):
+        if sources[key] == "unset":
+            sources[key] = "default"
     return ArkConfig(
         api_key=values["ARK_API_KEY"],
         base_url=_normalize_base_url(values["ARK_BASE_URL"] or DEFAULT_BASE_URL),
         sources=sources,
+        pro_model=_normalize_model_id(values["ARK_PRO_MODEL"] or PRO_MODEL, "ARK_PRO_MODEL"),
+        lite_model=_normalize_model_id(
+            values["ARK_LITE_MODEL"] or LITE_MODEL, "ARK_LITE_MODEL"
+        ),
     )
 
 
@@ -212,13 +224,30 @@ def _process_config() -> ArkConfig:
         sources={
             "ARK_API_KEY": "process environment" if values["ARK_API_KEY"] else "unset",
             "ARK_BASE_URL": "process environment" if values["ARK_BASE_URL"] else "default",
+            "ARK_PRO_MODEL": "process environment" if values["ARK_PRO_MODEL"] else "default",
+            "ARK_LITE_MODEL": "process environment" if values["ARK_LITE_MODEL"] else "default",
         },
+        pro_model=_normalize_model_id(values["ARK_PRO_MODEL"] or PRO_MODEL, "ARK_PRO_MODEL"),
+        lite_model=_normalize_model_id(
+            values["ARK_LITE_MODEL"] or LITE_MODEL, "ARK_LITE_MODEL"
+        ),
     )
 
 
 def die(message: str, code: int = 1) -> None:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(code)
+
+
+def _normalize_model_id(value: str, key: str) -> str:
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 256
+        or any(character.isspace() or ord(character) < 32 for character in normalized)
+    ):
+        die(f"{key} 必须是 1–256 个不含空白或控制字符的模型 ID。")
+    return normalized
 
 
 @lru_cache(maxsize=1)
@@ -246,13 +275,18 @@ def _load_image_dependencies(subtype: str | None = None):
 
 
 def resolve_model(
-    value: str | None, *, allow_fallback: bool = False
+    value: str | None,
+    *,
+    allow_fallback: bool = False,
+    config: ArkConfig | None = None,
 ) -> tuple[ModelProfile, str]:
+    pro_model = config.pro_model if config else PRO_MODEL
+    lite_model = config.lite_model if config else LITE_MODEL
     requested = (value or DEFAULT_MODEL).strip()
     normalized = requested.lower()
-    if normalized in {"pro", PRO_MODEL.lower()}:
-        return MODEL_PROFILES["pro"], requested
-    known_lite = {"", "lite", LITE_MODEL.lower(), LITE_MODEL_ALIAS.lower()}
+    if normalized in {"pro", pro_model.lower()}:
+        return replace(MODEL_PROFILES["pro"], model_id=pro_model), requested
+    known_lite = {"", "lite", lite_model.lower(), LITE_MODEL_ALIAS.lower()}
     if normalized not in known_lite:
         if not allow_fallback:
             die(f"未识别模型 {requested!r}；请明确使用 lite 或 pro。")
@@ -260,7 +294,7 @@ def resolve_model(
             f"Warning: 未识别模型 {requested!r}，按规则回退到 Seedream 5.0 Lite。",
             file=sys.stderr,
         )
-    return MODEL_PROFILES["lite"], requested
+    return replace(MODEL_PROFILES["lite"], model_id=lite_model), requested
 
 
 def read_prompt(prompt: str | None, prompt_file: str | None) -> str:
@@ -480,7 +514,9 @@ def _config_sources(config: ArkConfig) -> dict[str, str]:
 def validate_args(args: argparse.Namespace, config: ArkConfig | None = None) -> None:
     config = config or _process_config()
     profile, requested = resolve_model(
-        args.model, allow_fallback=getattr(args, "allow_model_fallback", False)
+        args.model,
+        allow_fallback=getattr(args, "allow_model_fallback", False),
+        config=config,
     )
     args.model_profile = profile
     args.requested_model = requested
@@ -600,13 +636,25 @@ def _selected_output_stem(prompt: str, private: bool) -> str:
 
 
 def _validate_portable_target(path: Path) -> None:
-    name = path.name
-    if not name or name.endswith((" ", ".")):
-        die(f"输出文件名不能为空或以空格/句点结尾：{path}")
-    if path.stem.upper() in WINDOWS_RESERVED_STEMS:
-        die(f"输出文件名是 Windows 保留名：{path.name}")
-    if len(name.encode("utf-8")) > 255:
-        die(f"输出文件名过长：{path.name}")
+    anchor = path.anchor
+    components = [
+        part for part in path.parts if part not in {anchor, "", ".", ".."}
+    ]
+    if not components:
+        die(f"输出路径缺少文件名：{path}")
+    for component in components:
+        if component.endswith((" ", ".")):
+            die(f"输出路径组件不能以空格或句点结尾：{component}")
+        if any(
+            ord(character) < 32 or character in PORTABLE_INVALID_PATH_CHARS
+            for character in component
+        ):
+            die(f"输出路径组件包含不可移植字符：{component}")
+        # Windows 设备名在第一个句点前即生效，例如 CON.png、CON.extra.png。
+        if component.split(".", 1)[0].upper() in WINDOWS_RESERVED_STEMS:
+            die(f"输出路径组件是 Windows 保留名：{component}")
+        if len(component.encode("utf-8")) > 255:
+            die(f"输出路径组件过长：{component}")
     if len(str(path.resolve(strict=False))) > MAX_PORTABLE_PATH_LENGTH:
         die(f"输出路径超过 {MAX_PORTABLE_PATH_LENGTH} 字符可移植上限：{path}")
 

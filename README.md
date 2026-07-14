@@ -10,6 +10,8 @@
 
 A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, request-state recovery, atomic saves, Lite image sets, and optional chroma-key conversion.
 
+Brand assets: the wide README banner is [`assets/seedream-imagegen-logo.png`](assets/seedream-imagegen-logo.png); the text-free square skill icon is [`assets/seedream-imagegen-icon.png`](assets/seedream-imagegen-icon.png). They are repository presentation assets, not generation inputs or outputs.
+
 > 中文文档：[README-zh.md](README-zh.md)
 
 ## Features
@@ -65,14 +67,16 @@ For ZIP installation, rename the extracted directory to `imagegen` and verify th
 
 ## Configuration
 
-Copy `.env.example` to `.env` inside the installed skill and set:
+Copy `.env.example` to `.env` inside the installed skill and set the API key. `ARK_BASE_URL` is optional and should only be added for a custom Ark endpoint:
 
 ```dotenv
 ARK_API_KEY=your_ark_api_key
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+# ARK_BASE_URL=https://custom.example/api/v3
+# ARK_PRO_MODEL=your_pro_model_id
+# ARK_LITE_MODEL=your_lite_model_id
 ```
 
-The CLI lazily reads only these two keys into an immutable per-run config; it does not modify `os.environ`, Windows environment settings, or `.env`. Never commit `.env` or paste credentials into prompts and logs.
+The built-in base URL is `https://ark.cn-beijing.volces.com/api/v3`; Pro and Lite also have built-in default Model IDs. `ARK_BASE_URL`, `ARK_PRO_MODEL`, and `ARK_LITE_MODEL` are optional overrides. Configuration precedence is process environment, then skill-local `.env`, then built-in defaults. The CLI lazily reads only these four keys into an immutable per-run config; it does not modify `os.environ`, Windows environment settings, or `.env`. UTF-8 files with or without BOM are accepted. Never commit `.env` or paste credentials into prompts and logs.
 
 ## Free smoke test
 

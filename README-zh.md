@@ -10,6 +10,8 @@
 
 面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、请求状态恢复、原子保存、Lite 组图和可选色键转透明。
 
+品牌资产：横向 README 横幅为 [`assets/seedream-imagegen-logo.png`](assets/seedream-imagegen-logo.png)，无文字方形 skill 图标为 [`assets/seedream-imagegen-icon.png`](assets/seedream-imagegen-icon.png)。两者仅用于仓库展示，不作为模型输入或生成结果。
+
 英文文档：[README.md](README.md)
 
 ## 功能
@@ -65,14 +67,16 @@ python -m pip install -r "$HOME/.claude/skills/imagegen/requirements.txt"
 
 ## 配置
 
-在已安装 skill 中复制 `.env.example` 为 `.env`，填写：
+在已安装 skill 中复制 `.env.example` 为 `.env`，填写 API Key。`ARK_BASE_URL` 为可选项，仅在使用自定义 Ark endpoint 时添加：
 
 ```dotenv
 ARK_API_KEY=你的_ark_api_key
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+# ARK_BASE_URL=https://custom.example/api/v3
+# ARK_PRO_MODEL=你的_pro_model_id
+# ARK_LITE_MODEL=你的_lite_model_id
 ```
 
-CLI 惰性读取这两个键到每次运行的不可变配置对象，不修改 `os.environ`、Windows 环境设置或 `.env`。不得提交 `.env`，不得把凭据写入 prompt 或日志。
+CLI 内置基础地址为 `https://ark.cn-beijing.volces.com/api/v3`，Pro 与 Lite 也各有内置默认 Model ID。`ARK_BASE_URL`、`ARK_PRO_MODEL`、`ARK_LITE_MODEL` 均为可选覆盖项。配置优先级为进程环境、skill-local `.env`、内置默认值。CLI 惰性读取这四个键到每次运行的不可变配置对象，不修改 `os.environ`、Windows 环境设置或 `.env`；支持有或无 BOM 的 UTF-8 文件。不得提交 `.env`，不得把凭据写入 prompt 或日志。
 
 ## 免费 smoke test
 

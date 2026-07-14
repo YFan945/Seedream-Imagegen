@@ -16,8 +16,9 @@ python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
 
 ## 配置与端点
 
-- `run()` 惰性加载 skill 根目录 `.env`，只读取 `ARK_API_KEY`、`ARK_BASE_URL`；非空值仅覆盖本次 CLI 的配置对象，不修改 `os.environ`。
-- 未设置 `ARK_BASE_URL` 时使用 `https://ark.cn-beijing.volces.com/api/v3`；仅 localhost、`127.0.0.1`、`::1` 可使用 HTTP。
+- `run()` 惰性加载 skill 根目录 `.env`，只读取 `ARK_API_KEY`、`ARK_BASE_URL`、`ARK_PRO_MODEL`、`ARK_LITE_MODEL`；支持有或无 BOM 的 UTF-8，不修改 `os.environ`。
+- 配置优先级为进程环境、skill-local `.env`、内置默认值。未设置 `ARK_BASE_URL` 时使用 `https://ark.cn-beijing.volces.com/api/v3`；Pro/Lite Model ID 也使用内置值。`.env` 中无需重复配置默认值。仅 localhost、`127.0.0.1`、`::1` 可使用 HTTP。
+- `ARK_PRO_MODEL` 与 `ARK_LITE_MODEL` 仅覆盖对应层级发送到 payload 的 Model ID，不改变 Pro/Lite 的本地能力、尺寸和参数校验规则。
 - 基础地址不得含认证信息、查询参数或片段。诊断只能显示配置来源（`skill-local .env`、`process environment`、`default`、`unset`），不能显示值。
 - 请求为 `POST <ARK_BASE_URL>/images/generations`，使用 `Authorization: Bearer <ARK_API_KEY>` 和 JSON payload。
 - 不要要求用户在聊天中粘贴密钥；请其在本机 `.env` 或环境变量中配置。
@@ -53,7 +54,7 @@ python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
 - 组图未传 `--out-dir` 时保存至当前项目 `images/`；文件名为 `<提示词>-01.png`、`<提示词>-02.png`……。显式 `--out-dir` 时仍使用 `image-01.ext`、`image-02.ext`……。
 - 默认文件名或默认组图冲突时，自动追加 `-v2`、`-v3` 等版本名，不覆盖已有图片。显式 `--out` 用于单图，`--out-dir` 用于组图。
 - `--private-filenames` 让默认名只包含 `seedream-<prompt hash>`，避免在文件名和状态路径泄露 prompt 摘要。
-- Windows 保留名、尾随空格/句点、超长文件名和超过 240 字符的非可移植目标路径会在 POST 前失败。
+- 任一路径组件中的 Windows 保留名/非法字符、尾随空格/句点、超过 255 UTF-8 bytes 的名称，以及超过 240 字符的非可移植目标路径都会在 POST 前失败。
 - 输出扩展名必须匹配 `--output-format`；默认 PNG，只有明确需要 JPEG 时使用 `.jpg`/`.jpeg` 与 `--output-format jpeg`。
 - 显式 `--out` 或显式 `--out-dir` 的组图计划目标已存在时不会覆盖；仅获得明确授权才使用 `--force`。`--force` 只覆盖本次计划目标，不清理 `--out-dir` 的其他文件；默认自动命名不需要 `--force`。脚本以原子写入落盘并验证真实图片格式和尺寸。
 
