@@ -1,5 +1,48 @@
 # CHANGELOG
 
+## v1.2.1 — 2026-07-14
+
+| 字段 | 内容 |
+| --- | --- |
+| 版本 | `v1.2.1` |
+| 时间范围 | 2026-07-14 15:57 ~ 19:39 |
+| Git 范围 | `v1.2.0` → `cf423ed` |
+| 提交数 | 3 |
+| 主要贡献者 | yfan945 |
+
+## 版本概述
+
+v1.2.0 发布后的加固补丁版本。核心改进：模型配置支持通过 `ARK_PRO_MODEL`/`ARK_LITE_MODEL` 环境变量覆盖，实现跨机器/CI 场景的可移植部署；输出路径验证从仅校验文件名扩展为全组件检测；技能资源目录完成重组（品牌资产统一到 `logo/`，视觉参考样例独立到 `assets/examples/`），配套补齐视觉参考文档和契约测试。
+
+## Bug 修复
+
+- **可移植模型配置**：新增 `ARK_PRO_MODEL` / `ARK_LITE_MODEL` 环境变量，支持 CI、容器和不同机器在不改安装目录 `.env` 的情况下覆盖模型 ID；进程环境配置优先级高于本地 `.env`；`.env` 文件读取兼容 UTF-8 BOM（`scripts/image_gen.py`）。
+- **输出路径验证加固**：`_validate_portable_target` 从仅校验文件名改为校验路径所有组件——空格/句点结尾、不可移植字符、Windows 设备名（含 `CON.extra.png` 等变体）、组件 UTF-8 长度、总路径 240 字符上限（`scripts/image_gen.py`）。
+
+## 重要调整
+
+- **资源目录重组**：品牌资产（logo/icon）从 `assets/` 统一迁入 `logo/`；新增 `assets/examples/` 存放四类可选视觉参考样例（写实自然、商品棚拍、信息图、叙事插画）——同步更新 `AGENTS.md`、`README.md`、`README-zh.md`、`SKILL.md` 中所有引用路径。
+- **视觉参考文档**：新增 `references/visual-examples.md`，含四类典型视觉方向的分类说明、完整 prompt、适用场景和使用限制。
+- **文档清理**：删除已完成的 `AUDIT-AND-REMEDIATION-PLAN.md`（654 行审计记录），并更新 `AGENTS.md` 中对项目目录结构的描述。
+- **CI 矩阵扩展**：GitHub Actions 增加 `macos-latest` 平台，验证跨平台兼容性。
+
+## 验证记录
+
+- `python -m pytest -q`：`127 passed, 89 subtests passed`。
+- `git diff --check`：通过。
+- 未发起真实 Ark 请求；测试使用 mock 或 dry-run。
+
+## 已知问题与后续计划
+
+- `MAX_PORTABLE_PATH_LENGTH = 240` 目前仅在 `_validate_portable_target` 中生效，其他路径处理函数尚未引用该上限。
+- CI 目前仅有 validate job（测试 + 编译 + 空白检查），无自动发布流水线。
+- 跨平台路径规则验证覆盖了 Windows/Linux/macOS，但实际行为待各平台真实运行确认。
+
+## 参考来源
+
+- Git baseline: `v1.2.0` (`313ef98`)
+- Daily changelog: [Changelog-2026-07-14-afternoon.md](Changelog-2026-07-14-afternoon.md)
+
 ## v1.2.0 — 2026-07-14
 
 | 字段 | 内容 |
