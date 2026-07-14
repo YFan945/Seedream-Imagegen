@@ -74,8 +74,8 @@ def test_brand_assets_live_outside_visual_examples():
     for filename in ("seedream-imagegen-logo.png", "seedream-imagegen-icon.png"):
         assert (ROOT / "logo" / filename).is_file()
         assert not (ROOT / "assets" / filename).exists()
-        for readme in (english, chinese):
-            assert f"logo/{filename}" in readme
+    for readme in (english, chinese):
+        assert "logo/seedream-imagegen-logo.png" in readme
 
 
 def test_runtime_docs_never_use_bare_repository_script_paths():
@@ -124,19 +124,16 @@ def test_powershell_reference_commands_use_initialized_local_paths():
     for text in (cli, chroma):
         assert "已渲染" in text
         assert "同一次 PowerShell 调用" in text
-    assert "tmp/seedream" not in chroma
 
 
 def test_skill_chooses_shell_without_scanning_unspecified_inputs():
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
-    for text in (skill, cli):
-        assert "原生 Windows" in text
-        assert "macOS、Linux 和 WSL" in text
-        assert "不" in text and "shell 选择" in text
-        assert "输入图片、prompt 文件" in text
-        assert "没有输入文件" in text
-        assert "不扫描" in text or "不得用 Glob" in text
+    assert "原生 Windows" in skill
+    assert "macOS、Linux 和 WSL" in skill
+    assert "不" in skill and "shell 选择" in skill
+    assert "输入图片、prompt 文件" in skill
+    assert "没有输入文件" in skill
+    assert "不得用 Glob" in skill
     assert 'skill_dir="${CLAUDE_SKILL_DIR}"' in skill
     assert 'project_dir="${CLAUDE_PROJECT_DIR}"' in skill
 
@@ -144,11 +141,83 @@ def test_skill_chooses_shell_without_scanning_unspecified_inputs():
 def test_prompt_language_follows_user_language_without_extra_deliberation():
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     prompting = (ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
-    for text in (skill, prompting):
-        assert "用户主要输入文本的语言" in text
-        assert "全局语言习惯" in text
-        assert "中文、英文" in text
-        assert "逐字" in text and "原文" in text
+    assert "references/prompting.md" in skill
+    assert "用户主要输入文本的语言" in prompting
+    assert "全局语言习惯" in prompting
+    assert "中文、英文" in prompting
+    assert "逐字" in prompting and "原文" in prompting
+
+
+def test_skill_links_every_runtime_reference_directly():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    expected = {
+        "lite.md",
+        "pro.md",
+        "prompting.md",
+        "sample-prompts.md",
+        "visual-examples.md",
+        "cli.md",
+        "chroma-key.md",
+    }
+    for filename in expected:
+        assert f"references/{filename}" in skill
+
+
+def test_prompt_templates_preserve_common_structure_and_scenarios():
+    prompting = (ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
+    samples = (ROOT / "references" / "sample-prompts.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## 通用结构" in samples
+    for field in ("任务类型", "核心请求", "输入图片", "必须保持", "禁止"):
+        assert f"{field}：" in samples
+
+    headings = (
+        "### 写实场景",
+        "### 商品摄影",
+        "### 信息图 / 教学图",
+        "### UI 线框图",
+        "### 风格化插画",
+        "### 历史场景",
+        "### 人物一致性",
+        "### 精确移除或替换",
+        "### 文字本地化",
+        "### 光照或天气",
+        "### 风格迁移",
+        "### 多图融合",
+        "### 草图转写实",
+        "### 圈选区域编辑",
+        "### 坐标对应替换",
+        "### 连贯组图",
+        "### 联网事实信息图",
+        "## 透明背景",
+    )
+    for heading in headings:
+        assert heading in samples
+
+    slugs = (
+        "photorealistic-natural",
+        "product-mockup",
+        "ui-mockup",
+        "infographic-diagram",
+        "scientific-educational",
+        "ads-marketing",
+        "productivity-visual",
+        "logo-brand",
+        "illustration-story",
+        "stylized-concept",
+        "historical-scene",
+        "text-localization",
+        "identity-preserve",
+        "precise-object-edit",
+        "lighting-weather",
+        "background-extraction",
+        "style-transfer",
+        "compositing",
+        "sketch-to-render",
+    )
+    for slug in slugs:
+        assert slug in prompting
 
 
 def test_prompt_temp_workflow_uses_project_root_and_preserves_ambiguous_state():
@@ -158,8 +227,6 @@ def test_prompt_temp_workflow_uses_project_root_and_preserves_ambiguous_state():
         assert ".seedream-prompt-<random-id>.txt" in text
         assert "HTTP 400" in text
         assert "不得" in text and "ambiguous" in text
-    assert "agent 不再新建" in skill
-    assert "agent 不再新建" in cli
     assert ".seedream-prompt-*.txt" in (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
@@ -175,6 +242,12 @@ def test_readmes_have_aligned_contracts_and_correct_license():
         assert "imagegen\\SKILL.md" in text or "imagegen/SKILL.md" in text
         assert "pending" in text and "ambiguous" in text
         assert "Claude Code 2.1.196+" in text
+        assert "references/prompting.md" in text
+        assert "references/sample-prompts.md" in text
+        assert "references/visual-examples.md" in text
+        assert '<p align="center">' in text
+    assert 'href="README-zh.md"' in english
+    assert 'href="README.md"' in chinese
     assert english.count("\n## ") == chinese.count("\n## ")
 
 

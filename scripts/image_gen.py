@@ -985,7 +985,7 @@ def _ensure_no_request_state(plan: OutputPlan) -> None:
 
 
 def _cleanup_prompt_file(args: argparse.Namespace) -> None:
-    """Remove an explicitly designated agent-owned prompt and empty temp dirs."""
+    """Remove an explicitly designated agent-owned prompt."""
     if not args.cleanup_prompt_file or not args.prompt_file:
         return
     try:
@@ -997,31 +997,6 @@ def _cleanup_prompt_file(args: argparse.Namespace) -> None:
         prompt_path.unlink(missing_ok=True)
     except OSError as exc:
         print(f"Warning: 已完成生成，但无法清理临时 prompt 文件：{args.prompt_file}（{exc}）", file=sys.stderr)
-        return
-
-    project_dir = _project_directory(args)
-    owned_root = (project_dir / "tmp" / "seedream").resolve(strict=False)
-    if not prompt_path.is_relative_to(owned_root):
-        return
-    current = prompt_path.parent
-    while current.is_relative_to(owned_root):
-        try:
-            current.rmdir()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            break
-        if current == owned_root:
-            break
-        current = current.parent
-
-    # 只在 agent 临时根已经为空并被删除后，顺带删除空的 project/tmp；
-    # rmdir 不会删除含有其他文件或目录的用户内容。
-    if not owned_root.exists():
-        try:
-            owned_root.parent.rmdir()
-        except (FileNotFoundError, OSError):
-            pass
 
 
 def _project_directory(args: argparse.Namespace) -> Path:
@@ -1035,7 +1010,6 @@ def _project_directory(args: argparse.Namespace) -> Path:
 def _validate_prompt_cleanup_path(args: argparse.Namespace) -> Path:
     path = Path(args.prompt_file)
     project_dir = _project_directory(args)
-    owned_root = (project_dir / "tmp" / "seedream").resolve(strict=False)
     resolved = path.resolve(strict=False)
     lexical = path.absolute()
     unsafe_link = False
@@ -1053,12 +1027,10 @@ def _validate_prompt_cleanup_path(args: argparse.Namespace) -> Path:
         resolved.parent == project_dir
         and ROOT_PROMPT_NAME_PATTERN.fullmatch(resolved.name) is not None
     )
-    legacy_owned = resolved.is_relative_to(owned_root)
-    if not root_owned and not legacy_owned:
+    if not root_owned:
         die(
             "--cleanup-prompt-file 仅允许项目根目录下名为 "
-            ".seedream-prompt-<random-id>.txt 的 agent 临时文件；"
-            f"旧版目录 {owned_root} 仅保留兼容。"
+            ".seedream-prompt-<random-id>.txt 的 agent 临时文件。"
         )
     conflicts = [getattr(args, "out", None), *(getattr(args, "image", None) or [])]
     for conflict in conflicts:

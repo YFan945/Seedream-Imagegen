@@ -8,21 +8,28 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE.txt)
 [![runtime](https://img.shields.io/badge/runtime-Claude%20Code-111827)](https://claude.com/claude-code)
 
+<p align="center">
+  <a href="README.md">English</a> · <strong>简体中文</strong>
+</p>
+
 面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、请求状态恢复、原子保存、Lite 组图和可选色键转透明。
-
-品牌资产：横向 README 横幅为 [`logo/seedream-imagegen-logo.png`](logo/seedream-imagegen-logo.png)，无文字方形 skill 图标为 [`logo/seedream-imagegen-icon.png`](logo/seedream-imagegen-icon.png)。两者仅用于仓库展示，不作为模型输入或生成结果。
-
-可选视觉参考位于 [`assets/examples/`](assets/examples/)，使用说明与完整 prompt 见 [`references/visual-examples.md`](references/visual-examples.md)。仅在任务需要相应视觉方向时使用。
-
-英文文档：[README.md](README.md)
 
 ## 功能
 
 - `generate`：文生图、参考图生图、多图融合和 Lite 组图。
 - `edit`：只修改明确目标并保持未要求内容不变。
+- 结构化 prompt：明确任务分类、参考图角色、逐字文字和编辑不变项，并提供常用场景模板。
 - 保守计费状态：408、429、5xx、未知 Ark 错误、超时、断连和保存不确定均保留为 `ambiguous`，不自动重试。
 - 递归脱敏、聚合请求上限、精确输出预检和原子 no-clobber 保存。
 - 已验证的色键 matte、foreground recovery、despill、border-connected、EXIF 转正和静态 HEIF 支持。
+
+## 文档
+
+- [Skill 工作流](SKILL.md)：模型选择、生成流程、计费保护和交付规则。
+- [Prompt 规则](references/prompting.md)与[场景模板](references/sample-prompts.md)：由 agent 按需选择结构化 prompt，用户无需填写表单。
+- [视觉示例](references/visual-examples.md)：可选风格参考，默认不会加入请求。
+- [CLI 参考](references/cli.md)、[Lite 规范](references/lite.md)与[Pro 规范](references/pro.md)：命令、参数和模型边界。
+- [色键参考](references/chroma-key.md)：受校验的透明背景工作流与限制。
 
 ## 先置条件
 
@@ -93,7 +100,7 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude Code 渲染 `SKILL.md` 时解析 skill 与项目根目录；后续参考文件使用得到的本地 `$skillDir` / `$projectDir`，不传递原始字符串替换。agent prompt 临时文件直接使用项目根目录 `.seedream-prompt-<random-id>.txt`，不再创建 `tmp/seedream`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
+Claude Code 渲染 `SKILL.md` 时解析 skill 与项目根目录；后续参考文件使用得到的本地 `$skillDir` / `$projectDir`，不传递原始字符串替换。agent prompt 临时文件使用项目根目录 `.seedream-prompt-<random-id>.txt`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
 
 `--dry-run` 只在显式传参时执行，不是普通生成的默认步骤。需要联网且未指定模型时直接使用 Lite；用户或 prompt 明确要求联网，以及带有具体近期日期的世界局势等时效任务，都启用 `--web-search`，该参数本身不强制要求 dry-run。联网与 Pro 能力同时被明确要求时，应先让用户二选一。
 

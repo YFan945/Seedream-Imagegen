@@ -36,7 +36,7 @@ python -m pytest -q
 python scripts\image_gen.py generate --model lite --prompt "测试" --out output\test.png --dry-run
 ```
 
-真实请求前确认 `ARK_API_KEY` 已在 skill-local `.env` 或进程环境中配置；不得输出或提交密钥。agent 创建的 prompt 临时文件统一使用项目根目录 `.seedream-prompt-<random-id>.txt`，其中 `<random-id>` 为 6–64 位 ASCII 字母、数字、`_` 或 `-`，并配合 `--cleanup-prompt-file`；`tmp/seedream/` 仅保留旧版清理兼容，不再新建。不得删除用户输入或不确定请求状态文件。
+真实请求前确认 `ARK_API_KEY` 已在 skill-local `.env` 或进程环境中配置；不得输出或提交密钥。agent 创建的 prompt 临时文件统一使用项目根目录 `.seedream-prompt-<random-id>.txt`，其中 `<random-id>` 为 6–64 位 ASCII 字母、数字、`_` 或 `-`，并配合 `--cleanup-prompt-file`。不得删除用户输入或不确定请求状态文件。
 
 ## 代码风格与命名
 

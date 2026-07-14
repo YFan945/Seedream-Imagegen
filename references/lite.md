@@ -71,10 +71,6 @@
 
 ## 输入与响应
 
-- 输入格式：jpeg、png、webp、bmp、tiff、gif、heic、heif。
-- 单张不超过 30,000,000 字节；宽高均大于 14 px；总像素不超过 36,000,000；比例 `[1/16,16]`。
-- Base64 使用 `data:image/<小写格式>;base64,<数据>`；远程 URL 必须可访问。
-- `response_format` 支持 `url`/`b64_json`，`output_format` 支持 png/jpeg；URL 仅保留 24 小时，必须立即下载并校验。
-- 保存前验证真实格式、尺寸及单图数量；单图必须恰好一项，组图不得超过计划上限。输出或响应不确定时保留请求状态，停止而非重试。
+通用输入格式、文件大小、尺寸、Base64/URL 和保存规则见 `cli.md`。Lite 单图响应必须恰好一项，组图不得超过计划上限；URL 仅保留 24 小时，必须立即下载并校验。输出或响应不确定时保留请求状态，停止而非重试。
 
 官方依据：[Seedream 4.0-5.0 教程](https://docs.volcengine.com/docs/82379/1824121?lang=zh)与[图片生成 API](https://api.volcengine.com/api-docs/view?action=ImageGenerations&serviceCode=ark&version=2024-01-01)，复核日期 2026-07-14。Model ID、14 张输入和部分精确上限在当前公开页面中缺少可直接逐项定位的静态正文，属于可追溯性缺口；修改这些高风险常量前必须重新核对官方控制台/API 说明。

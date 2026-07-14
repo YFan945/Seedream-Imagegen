@@ -2,11 +2,9 @@
 
 本文规定 bundled `scripts/image_gen.py` CLI 的调用、预检、保存和失败恢复。它不重新定义模型能力：Lite 见 `lite.md`，Pro 见 `pro.md`。所有真实请求都必须通过该脚本，不得临时编写 SDK/HTTP runner 或修改脚本。
 
-## Shell 与文件发现
+## Shell 约定
 
-- 原生 Windows 在 PowerShell tool 可用时直接使用 PowerShell，否则使用 Claude Code 的 Bash/Git Bash；macOS、Linux 和 WSL 直接使用 Bash。按当前环境直接执行，不输出关于 shell 选择的自我讨论。
-- 本文命令以 PowerShell 展示，并依赖 `SKILL.md` 已初始化的 `$skillDir` / `$projectDir`。使用 Bash 时改用同处定义的 `skill_dir` / `project_dir` 和 POSIX 路径写法，不额外安装或切换 shell。
-- 用户未提供或引用输入图片、prompt 文件时，按没有输入文件处理，不扫描项目目录寻找候选文件。输出冲突与请求恢复只检查已确定路径或使用 CLI dry-run，不为此枚举全部图片或临时 prompt。
+本文命令以 PowerShell 展示，依赖 `SKILL.md` 已渲染并初始化的 `$skillDir` / `$projectDir`；必须把初始化与命令放在同一次 PowerShell 调用中。Bash 使用同处定义的 `skill_dir` / `project_dir` 和 POSIX 路径。
 
 ## 快速开始
 
@@ -38,19 +36,19 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
 
 - `--prompt` 与 UTF-8 `--prompt-file` 只能二选一；多行、含引号或逐字文字优先后者。
 - `pro` 或精确 Pro Model ID 路由 Pro；`lite`、Lite Model ID 或空值路由 Lite。未知值默认失败；只有显式 `--allow-model-fallback` 才兼容回退 Lite，并必须先检查 `--dry-run` warning。
-- 仅按 skill 的模型决策传入 `--model pro` 或 `--model lite`。需要联网且未指定模型时直接使用 Lite；同时要求联网与 Pro 时先询问用户选择 `Lite 联网` 或 `Pro 生图能力`。CLI 仍会拒绝 Pro 与 `--web-search` 的冲突，不静默切换。
+- 仅按 `SKILL.md` 的模型决策传入 `--model pro` 或 `--model lite`。CLI 会拒绝 Pro 与 `--web-search` 的冲突，不静默切换。
 
 ## 参数与模式规则
 
 通用参数：`--image`（可重复）、`--size`、`--seed`、`--guidance-scale`、`--output-format`、`--response-format`、`--watermark`/`--no-watermark`、`--out`、`--force`、`--private-filenames`、`--timeout`、`--dry-run`。
 
-`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。新工作流要求 agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。旧版项目根目录 `tmp/seedream/` 仅保留清理兼容，agent 不再新建。
+`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。
 
 - 默认：Lite、2K、PNG、`url`、无水印、单图、非流式、不开联网、`--timeout 300`。timeout 是单次网络/socket operation 上限，不是整次生成总 deadline。`--watermark` 发送 JSON 布尔值 `true`，`--no-watermark` 发送 `false`。
 - `seed` 必须是 int32；`guidance_scale` 必须为有限的 `[1,10]` 数值。尺寸和功能组合由所选模型本地验证。
 - Lite 单图发送 `sequential_image_generation="disabled"`；组图使用 `--sequential auto --max-images N`，可选 `--out-dir DIRECTORY`。
 - 组图不能使用 `--out`；单图不能使用 `--out-dir` 或 `--max-images`。Pro 拒绝组图、`--stream`、`--web-search`。
-- `--web-search` 仅 Lite；用户或 prompt 明确要求联网时启用，未明确要求但任务依赖最新事实时可按模型需要启用。开启工具后，由模型决定是否实际搜索，CLI 不会因此自动 dry-run。`--stream` 也仅 Lite。
+- `--web-search` 和 `--stream` 仅 Lite。开启搜索工具后由模型决定是否实际搜索，CLI 不会因此自动 dry-run。
 
 ## 输入、输出与保存
 

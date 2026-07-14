@@ -8,21 +8,28 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE.txt)
 [![runtime](https://img.shields.io/badge/runtime-Claude%20Code-111827)](https://claude.com/claude-code)
 
+<p align="center">
+  <strong>English</strong> · <a href="README-zh.md">简体中文</a>
+</p>
+
 A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, request-state recovery, atomic saves, Lite image sets, and optional chroma-key conversion.
-
-Brand assets: the wide README banner is [`logo/seedream-imagegen-logo.png`](logo/seedream-imagegen-logo.png); the text-free square skill icon is [`logo/seedream-imagegen-icon.png`](logo/seedream-imagegen-icon.png). They are repository presentation assets, not generation inputs or outputs.
-
-Optional visual references live in [`assets/examples/`](assets/examples/) with usage guidance and complete prompts in [`references/visual-examples.md`](references/visual-examples.md). They are used only when the requested visual direction calls for them.
-
-> 中文文档：[README-zh.md](README-zh.md)
 
 ## Features
 
 - `generate` for text-to-image, reference-image generation, multi-image fusion, and Lite image sets.
 - `edit` for explicit edits that preserve unrequested content.
+- Structured prompts for task categories, reference-image roles, exact text, edit invariants, and common scenario templates.
 - Conservative billing state: 408, 429, 5xx, unknown Ark errors, timeouts, disconnects, and uncertain saves remain `ambiguous` and are never retried automatically.
 - Recursive secret redaction, aggregate request limits, exact output preflight, and atomic no-clobber saves.
 - Validated chroma-key matte, foreground recovery, despill, border-connected mode, EXIF transpose, and static HEIF support.
+
+## Documentation
+
+- [Skill workflow](SKILL.md): model selection, generation flow, billing safeguards, and delivery rules.
+- [Prompt guidance](references/prompting.md) and [scenario templates](references/sample-prompts.md): structured prompts selected by the agent; users do not need to fill in a form.
+- [Visual examples](references/visual-examples.md): optional style references that are never added to requests by default.
+- [CLI reference](references/cli.md), [Lite specification](references/lite.md), and [Pro specification](references/pro.md): commands, parameters, and model boundaries.
+- [Chroma-key reference](references/chroma-key.md): validated transparency workflow and limitations.
 
 ## Requirements
 
@@ -93,7 +100,7 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude Code resolves the skill and project roots while rendering `SKILL.md`; supporting reference files use the resulting local `$skillDir` / `$projectDir` variables instead of raw substitution tokens. Agent prompt files use `.seedream-prompt-<random-id>.txt` directly in the project root, without creating `tmp/seedream`; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
+Claude Code resolves the skill and project roots while rendering `SKILL.md`; supporting reference files use the resulting local `$skillDir` / `$projectDir` variables instead of raw substitution tokens. Agent prompt files use `.seedream-prompt-<random-id>.txt` in the project root; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
 
 `--dry-run` runs only when explicitly supplied; it is not the default for ordinary generation. When web access is needed and no model was selected, use Lite directly. Enable `--web-search` when the user or prompt explicitly requests it or when a recent dated world-situation task depends on current facts; that flag alone does not require dry-run. If web access and Pro capabilities are both explicitly requested, ask the user to choose one.
 

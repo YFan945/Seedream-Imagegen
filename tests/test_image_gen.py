@@ -1065,47 +1065,6 @@ class ImageGenTests(unittest.TestCase):
                     image_gen.run(args)
             self.assertTrue(output.is_file())
             self.assertFalse(prompt_file.exists())
-            self.assertFalse((root / "tmp" / "seedream").exists())
-            self.assertFalse((root / "tmp").exists())
-
-    def test_successful_prompt_cleanup_preserves_nonempty_temp_directories(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            prompt_file = root / "tmp" / "seedream" / "nested" / "prompt.txt"
-            prompt_file.parent.mkdir(parents=True)
-            prompt_file.write_text("临时 prompt", encoding="utf-8")
-            sibling = root / "tmp" / "seedream" / "keep.txt"
-            sibling.write_text("保留", encoding="utf-8")
-            unrelated = root / "tmp" / "user-data.txt"
-            unrelated.write_text("保留", encoding="utf-8")
-            output = root / "result.png"
-            result = {
-                "data": [
-                    {
-                        "b64_json": base64.b64encode(
-                            self.image_bytes("PNG")
-                        ).decode("ascii")
-                    }
-                ]
-            }
-            args = self.make_args(
-                prompt=None,
-                prompt_file=str(prompt_file),
-                cleanup_prompt_file=True,
-                out=str(output),
-                dry_run=False,
-                response_format="b64_json",
-                project_dir=str(root),
-            )
-            with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
-                with mock.patch.object(image_gen, "api_request", return_value=result):
-                    image_gen.run(args)
-            self.assertFalse(prompt_file.exists())
-            self.assertFalse(prompt_file.parent.exists())
-            self.assertTrue(sibling.is_file())
-            self.assertTrue(unrelated.is_file())
-            self.assertTrue((root / "tmp" / "seedream").is_dir())
-            self.assertTrue((root / "tmp").is_dir())
 
     def test_ambiguous_request_cleans_prompt_but_keeps_state_file(self):
         with TemporaryDirectory() as directory:
@@ -1169,8 +1128,7 @@ class ImageGenTests(unittest.TestCase):
     def test_cleanup_prompt_file_symlink_is_rejected(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            prompt_file = root / "tmp" / "seedream" / "prompt.txt"
-            prompt_file.parent.mkdir(parents=True)
+            prompt_file = root / ".seedream-prompt-abc123.txt"
             prompt_file.write_text("临时", encoding="utf-8")
             args = self.make_args(
                 prompt=None,
