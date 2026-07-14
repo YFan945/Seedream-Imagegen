@@ -9,7 +9,7 @@
 - 仅单图输出；最多 10 张参考图。
 - 支持 1K、2K 或合法自定义尺寸；不支持 3K/4K。
 - 不支持组图、`stream` 或模型原生 `web_search`。
-- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
+- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 bundled `scripts/image_gen.py` CLI 处理，不要自行拼装第二套客户端。
 
 ## 输出尺寸
 

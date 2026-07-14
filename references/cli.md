@@ -1,15 +1,21 @@
 # Seedream CLI 参考
 
-本文规定 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 的调用、预检、保存和失败恢复。它不重新定义模型能力：Lite 见 `lite.md`，Pro 见 `pro.md`。所有真实请求都必须通过该脚本，不得临时编写 SDK/HTTP runner 或修改脚本。
+本文规定 bundled `scripts/image_gen.py` CLI 的调用、预检、保存和失败恢复。它不重新定义模型能力：Lite 见 `lite.md`，Pro 见 `pro.md`。所有真实请求都必须通过该脚本，不得临时编写 SDK/HTTP runner 或修改脚本。
+
+## Shell 与文件发现
+
+- 原生 Windows 在 PowerShell tool 可用时直接使用 PowerShell，否则使用 Claude Code 的 Bash/Git Bash；macOS、Linux 和 WSL 直接使用 Bash。按当前环境直接执行，不输出关于 shell 选择的自我讨论。
+- 本文命令以 PowerShell 展示，并依赖 `SKILL.md` 已初始化的 `$skillDir` / `$projectDir`。使用 Bash 时改用同处定义的 `skill_dir` / `project_dir` 和 POSIX 路径写法，不额外安装或切换 shell。
+- 用户未提供或引用输入图片、prompt 文件时，按没有输入文件处理，不扫描项目目录寻找候选文件。输出冲突与请求恢复只检查已确定路径或使用 CLI dry-run，不为此枚举全部图片或临时 prompt。
 
 ## 快速开始
 
-从任意工作目录调用 skill 脚本。以下是普通单图真实请求；可能计费：
+从任意工作目录调用 skill 脚本。以下示例依赖 `SKILL.md` 已渲染出的 `$skillDir` / `$projectDir` 初始化行；必须把初始化与命令放在同一次 PowerShell 调用中。以下是普通单图真实请求；可能计费：
 
 ```powershell
-python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
+python "$skillDir\scripts\image_gen.py" generate --model lite `
   --prompt "极简陶瓷杯商品摄影" --size 2K `
-  --out "${CLAUDE_PROJECT_DIR}/output/seedream/cup.png"
+  --out "$projectDir\output\seedream\cup.png"
 ```
 
 只有显式加入 `--dry-run` 才会执行不计费的本地预检。CLI 不会自动开启它；真实请求需要 `ARK_API_KEY` 和可访问的 Ark 服务，dry-run 不需要网络或密钥。
@@ -38,7 +44,7 @@ python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
 
 通用参数：`--image`（可重复）、`--size`、`--seed`、`--guidance-scale`、`--output-format`、`--response-format`、`--watermark`/`--no-watermark`、`--out`、`--force`、`--private-filenames`、`--timeout`、`--dry-run`。
 
-`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。新工作流要求 agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。旧版 `${CLAUDE_PROJECT_DIR}/tmp/seedream/` 仅保留清理兼容，agent 不再新建。
+`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。新工作流要求 agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。旧版项目根目录 `tmp/seedream/` 仅保留清理兼容，agent 不再新建。
 
 - 默认：Lite、2K、PNG、`url`、无水印、单图、非流式、不开联网、`--timeout 300`。timeout 是单次网络/socket operation 上限，不是整次生成总 deadline。`--watermark` 发送 JSON 布尔值 `true`，`--no-watermark` 发送 `false`。
 - `seed` 必须是 int32；`guidance_scale` 必须为有限的 `[1,10]` 数值。尺寸和功能组合由所选模型本地验证。
@@ -76,24 +82,24 @@ python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
 Pro 标记编辑：
 
 ```powershell
-python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" edit --model pro `
+python "$skillDir\scripts\image_gen.py" edit --model pro `
   --image C:\input\marked.png --prompt-file C:\input\edit-prompt.txt `
-  --out "${CLAUDE_PROJECT_DIR}/output/seedream/edited.png" --dry-run
+  --out "$projectDir\output\seedream\edited.png" --dry-run
 ```
 
 Lite 组图：
 
 ```powershell
-python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
+python "$skillDir\scripts\image_gen.py" generate --model lite `
   --prompt-file C:\input\series.txt --size 4K `
   --sequential auto --max-images 4 `
-  --out-dir "${CLAUDE_PROJECT_DIR}/output/seedream/series" --dry-run
+  --out-dir "$projectDir\output\seedream\series" --dry-run
 ```
 
 Lite 联网单图（以下为真实请求，可能计费；仅 `--web-search` 不要求 dry-run）：
 
 ```powershell
-python "${CLAUDE_SKILL_DIR}/scripts/image_gen.py" generate --model lite `
+python "$skillDir\scripts\image_gen.py" generate --model lite `
   --prompt "联网搜索并制作上海未来5日天气图" --web-search `
-  --out "${CLAUDE_PROJECT_DIR}/output/seedream/weather.png"
+  --out "$projectDir\output\seedream\weather.png"
 ```

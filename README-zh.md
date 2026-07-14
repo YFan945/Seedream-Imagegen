@@ -26,7 +26,7 @@
 
 ## 先置条件
 
-- 支持 skills 的 Claude Code。
+- 支持 skills 的 Claude Code 2.1.196+。
 - Python 3.10+ 与 `pip`。
 - 可访问所选 Seedream 模型的火山方舟 Ark API Key。
 - 真实请求时可访问 Ark endpoint 的网络环境。
@@ -93,7 +93,7 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude 调用 bundled scripts 时应使用 `${CLAUDE_SKILL_DIR}`。agent prompt 临时文件直接使用项目根目录 `.seedream-prompt-<random-id>.txt`，不再创建 `tmp/seedream`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
+Claude Code 渲染 `SKILL.md` 时解析 skill 与项目根目录；后续参考文件使用得到的本地 `$skillDir` / `$projectDir`，不传递原始字符串替换。agent prompt 临时文件直接使用项目根目录 `.seedream-prompt-<random-id>.txt`，不再创建 `tmp/seedream`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
 
 `--dry-run` 只在显式传参时执行，不是普通生成的默认步骤。需要联网且未指定模型时直接使用 Lite；用户或 prompt 明确要求联网，以及带有具体近期日期的世界局势等时效任务，都启用 `--web-search`，该参数本身不强制要求 dry-run。联网与 Pro 能力同时被明确要求时，应先让用户二选一。
 

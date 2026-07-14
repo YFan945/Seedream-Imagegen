@@ -7,6 +7,24 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 使用 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 生成或编辑位图；默认从本 skill 根目录 `.env` 读取 Ark 配置。本 skill 只有 `generate` 和 `edit` 两类任务：按用户意图选择，不要用参考图是否存在来代替判断。所有真实请求经该统一 CLI 发往 `POST <ARK_BASE_URL>/images/generations`；不得创建临时 SDK/HTTP 脚本或修改 CLI。
 
+Claude Code 渲染本文件时，使用官方字符串替换得到绝对路径。原生 Windows 在 PowerShell tool 可用时直接使用 PowerShell，否则使用 Bash/Git Bash；macOS、Linux 和 WSL 直接使用 Bash。不要询问、列举或解释 shell 选择。执行命令时，在同一次工具调用中按当前 shell 初始化路径；不同工具调用之间不假设变量保留。
+
+PowerShell：
+
+```powershell
+$skillDir = "${CLAUDE_SKILL_DIR}"
+$projectDir = "${CLAUDE_PROJECT_DIR}"
+```
+
+Bash：
+
+```bash
+skill_dir="${CLAUDE_SKILL_DIR}"
+project_dir="${CLAUDE_PROJECT_DIR}"
+```
+
+随后只使用加双引号的本地路径变量调用 bundled scripts 和传递项目路径。`references/` 是后续按普通文件读取的文档，其中的示例依赖以上初始化；不得把 Claude Code 字符串替换改写成 `$env:CLAUDE_SKILL_DIR` / `$env:CLAUDE_PROJECT_DIR`，也不得在新的 shell 调用中省略初始化。
+
 ## 快速执行准则
 
 每次任务按以下顺序处理，避免把能力选择、真实请求与迭代混在一起：
@@ -69,6 +87,8 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 每张输入图均按 CLI `--image` 顺序标明角色：`编辑目标`、`内容来源`、`风格参考` 或 `交互标记图`；称为「图一、图二……」，不依赖文件名猜测角色。
 
+用户没有提供或明确引用输入图片、prompt 文件时，直接按“没有输入文件”处理；不得用 Glob、Search、`find`、`ls` 或递归目录扫描寻找候选图片、旧 prompt 或临时文件。需要判断覆盖或恢复状态时，只检查已确定的输出路径及其状态文件，或交给 CLI dry-run 预检，不枚举项目中的 `*.png`。只有用户明确要求使用现有文件但未给出路径时，才进行范围明确的定向查找或向用户询问。
+
 ## 工作流
 
 1. 按模型选择规则决定 Lite 或 Pro；只读取所选模型的 `references/lite.md` 或 `references/pro.md`。
@@ -91,6 +111,8 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 ## Prompt 规范
 
 每个请求归入一个分类 slug，保持与参考模板一致。
+
+Prompt 使用用户主要输入文本的语言；混合或不明确时沿用当前对话及用户的全局语言习惯。中文、英文均可，不要仅为选择 prompt 语言反复分析、翻译或询问；用户要求逐字呈现的文字保持原文。
 
 生成：`photorealistic-natural`、`product-mockup`、`ui-mockup`、`infographic-diagram`、`scientific-educational`、`ads-marketing`、`productivity-visual`、`logo-brand`、`illustration-story`、`stylized-concept`、`historical-scene`。
 

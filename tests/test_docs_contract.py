@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from tempfile import TemporaryDirectory
 
 import yaml
 from PIL import Image, ImageChops
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +89,68 @@ def test_runtime_docs_never_use_bare_repository_script_paths():
     assert not offenders
 
 
+def test_claude_path_substitutions_are_scoped_to_rendered_skill():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    assert '$skillDir = "${CLAUDE_SKILL_DIR}"' in skill
+    assert '$projectDir = "${CLAUDE_PROJECT_DIR}"' in skill
+
+    raw_docs = [
+        ROOT / "README.md",
+        ROOT / "README-zh.md",
+        *(ROOT / "references").glob("*.md"),
+    ]
+    forbidden = (
+        "${CLAUDE_SKILL_DIR}",
+        "${CLAUDE_PROJECT_DIR}",
+        "$env:CLAUDE_SKILL_DIR",
+        "$env:CLAUDE_PROJECT_DIR",
+    )
+    offenders = [
+        f"{path.relative_to(ROOT)} -> {token}"
+        for path in raw_docs
+        for token in forbidden
+        if token in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, "普通文档不得依赖 Claude Code 字符串替换：\n" + "\n".join(
+        offenders
+    )
+
+
+def test_powershell_reference_commands_use_initialized_local_paths():
+    cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
+    chroma = (ROOT / "references" / "chroma-key.md").read_text(encoding="utf-8")
+    assert cli.count('python "$skillDir\\scripts\\image_gen.py"') == 4
+    assert 'python "$skillDir\\scripts\\remove_chroma_key.py"' in chroma
+    for text in (cli, chroma):
+        assert "已渲染" in text
+        assert "同一次 PowerShell 调用" in text
+    assert "tmp/seedream" not in chroma
+
+
+def test_skill_chooses_shell_without_scanning_unspecified_inputs():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
+    for text in (skill, cli):
+        assert "原生 Windows" in text
+        assert "macOS、Linux 和 WSL" in text
+        assert "不" in text and "shell 选择" in text
+        assert "输入图片、prompt 文件" in text
+        assert "没有输入文件" in text
+        assert "不扫描" in text or "不得用 Glob" in text
+    assert 'skill_dir="${CLAUDE_SKILL_DIR}"' in skill
+    assert 'project_dir="${CLAUDE_PROJECT_DIR}"' in skill
+
+
+def test_prompt_language_follows_user_language_without_extra_deliberation():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    prompting = (ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
+    for text in (skill, prompting):
+        assert "用户主要输入文本的语言" in text
+        assert "全局语言习惯" in text
+        assert "中文、英文" in text
+        assert "逐字" in text and "原文" in text
+
+
 def test_prompt_temp_workflow_uses_project_root_and_preserves_ambiguous_state():
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
@@ -110,6 +174,7 @@ def test_readmes_have_aligned_contracts_and_correct_license():
         assert "-a claude-code" in text
         assert "imagegen\\SKILL.md" in text or "imagegen/SKILL.md" in text
         assert "pending" in text and "ambiguous" in text
+        assert "Claude Code 2.1.196+" in text
     assert english.count("\n## ") == chinese.count("\n## ")
 
 
@@ -190,6 +255,83 @@ def test_external_cwd_and_space_paths_support_dry_run_without_real_env():
         assert completed.returncode == 0, completed.stderr
         preview = json.loads(completed.stdout)
         assert Path(preview["output"]) == output
+        assert preview["config_sources"]["ARK_API_KEY"] == "unset"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="仅验证 Windows PowerShell 语法")
+def test_powershell_local_path_initialization_supports_space_paths():
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        skill = root / "skill with spaces"
+        project = root / "project with spaces"
+        (skill / "scripts").mkdir(parents=True)
+        project.mkdir()
+        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+
+        def quoted(value: Path | str) -> str:
+            return "'" + str(value).replace("'", "''") + "'"
+
+        command = "; ".join(
+            [
+                f"$skillDir = {quoted(skill)}",
+                f"$projectDir = {quoted(project)}",
+                f"$python = {quoted(sys.executable)}",
+                '& $python "$skillDir\\scripts\\image_gen.py" generate --model lite '
+                '--prompt "PowerShell 路径测试" '
+                '--out "$projectDir\\output\\result.png" --dry-run',
+            ]
+        )
+        environment = os.environ.copy()
+        environment.pop("ARK_API_KEY", None)
+        environment.pop("ARK_BASE_URL", None)
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            cwd=project,
+            env=environment,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        preview = json.loads(completed.stdout)
+        assert Path(preview["output"]) == project / "output" / "result.png"
+        assert preview["config_sources"]["ARK_API_KEY"] == "unset"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 由 PowerShell 专项用例覆盖")
+def test_bash_local_path_initialization_supports_space_paths():
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        skill = root / "skill with spaces"
+        project = root / "project with spaces"
+        (skill / "scripts").mkdir(parents=True)
+        project.mkdir()
+        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+        command = "; ".join(
+            [
+                f"skill_dir={shlex.quote(str(skill))}",
+                f"project_dir={shlex.quote(str(project))}",
+                f"{shlex.quote(sys.executable)} \"$skill_dir/scripts/image_gen.py\" "
+                "generate --model lite --prompt 'Bash path test' "
+                '--out "$project_dir/output/result.png" --dry-run',
+            ]
+        )
+        environment = os.environ.copy()
+        environment.pop("ARK_API_KEY", None)
+        environment.pop("ARK_BASE_URL", None)
+        completed = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=project,
+            env=environment,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        preview = json.loads(completed.stdout)
+        assert Path(preview["output"]) == project / "output" / "result.png"
         assert preview["config_sources"]["ARK_API_KEY"] == "unset"
 
 

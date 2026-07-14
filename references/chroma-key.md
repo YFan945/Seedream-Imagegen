@@ -8,12 +8,12 @@
 
 ## 推荐命令
 
-始终从任意 CWD 使用 skill 绝对路径，并把实际生成键色显式传入：
+始终从任意 CWD 使用 skill 绝对路径，并把实际生成键色显式传入。以下示例依赖 `SKILL.md` 已渲染出的 `$skillDir` / `$projectDir` 初始化行；必须把初始化与命令放在同一次 PowerShell 调用中：
 
 ```powershell
-python "${CLAUDE_SKILL_DIR}/scripts/remove_chroma_key.py" `
-  --input "${CLAUDE_PROJECT_DIR}/tmp/seedream/source.png" `
-  --out "${CLAUDE_PROJECT_DIR}/output/subject.png" `
+python "$skillDir\scripts\remove_chroma_key.py" `
+  --input "$projectDir\subject-source.png" `
+  --out "$projectDir\subject-transparent.png" `
   --key-color 00ff00 --soft-matte --despill --border-connected
 ```
 

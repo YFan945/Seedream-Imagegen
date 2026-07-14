@@ -26,7 +26,7 @@ Optional visual references live in [`assets/examples/`](assets/examples/) with u
 
 ## Requirements
 
-- Claude Code with skills support.
+- Claude Code 2.1.196+ with skills support.
 - Python 3.10+ and `pip`.
 - A Volcengine Ark API key with access to the selected Seedream model.
 - Network access to the configured Ark endpoint for real requests.
@@ -93,7 +93,7 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude should use `${CLAUDE_SKILL_DIR}` for bundled scripts. Agent prompt files now use `.seedream-prompt-<random-id>.txt` directly in the project root, without creating `tmp/seedream`; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
+Claude Code resolves the skill and project roots while rendering `SKILL.md`; supporting reference files use the resulting local `$skillDir` / `$projectDir` variables instead of raw substitution tokens. Agent prompt files use `.seedream-prompt-<random-id>.txt` directly in the project root, without creating `tmp/seedream`; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
 
 `--dry-run` runs only when explicitly supplied; it is not the default for ordinary generation. When web access is needed and no model was selected, use Lite directly. Enable `--web-search` when the user or prompt explicitly requests it or when a recent dated world-situation task depends on current facts; that flag alone does not require dry-run. If web access and Pro capabilities are both explicitly requested, ask the user to choose one.
 

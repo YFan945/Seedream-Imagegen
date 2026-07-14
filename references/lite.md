@@ -19,7 +19,7 @@
 - 支持文生图、单/多图编辑和融合、组图、联网搜索、流式输出。
 - 最多 14 张参考图；参考图数量 + 计划输出数量不超过 15。
 - 支持 2K、3K、4K 或合法自定义尺寸；不支持 1K。
-- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
+- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 bundled `scripts/image_gen.py` CLI 处理，不要自行拼装第二套客户端。
 
 ## 输出尺寸
 
