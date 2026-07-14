@@ -30,6 +30,7 @@
 - Python 3.10+ 与 `pip`。
 - 可访问所选 Seedream 模型的火山方舟 Ark API Key。
 - 真实请求时可访问 Ark endpoint 的网络环境。
+- 统一依赖文件：`requirements.txt` 同时包含运行与测试依赖。
 
 ## 安装
 
@@ -116,12 +117,14 @@ Claude 调用 bundled scripts 时应使用 `${CLAUDE_SKILL_DIR}`。agent prompt 
 在克隆仓库根目录执行：
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python -m pytest -q
 python -m compileall -q scripts tests
 python tests\benchmark_remove_chroma_key.py --max-seconds 7
 git diff --check
 ```
+
+`pyproject.toml` 用于标准化项目元数据和 `pytest` 配置（当前包含测试目录与默认报告）；它不是第二个依赖安装入口。所有依赖只通过 `requirements.txt` 安装。
 
 测试全局阻断真实网络，不会发起计费 Ark 请求。协作规则见 [AGENTS.md](AGENTS.md)。
 

@@ -10,13 +10,15 @@
 - `references/`：模型能力、CLI、提示词、模板和视觉示例说明；修改流程或参数时同步更新对应文件。
 - `assets/examples/`：按需使用的典型视觉参考，不是默认模型输入；新增或调整图片时同步更新 `references/visual-examples.md`。
 - `logo/`：README 横幅和方形 skill 图标，仅用于项目品牌展示。
+- `requirements.txt`：唯一依赖入口，包含运行与测试依赖。
+- `pyproject.toml`：项目元数据和 `pytest` 配置，不声明第二套安装依赖。
 - 单图默认放在当前项目根目录，以清理后的 prompt 命名；组图默认放在 `images/`；不得提交 `.env`、缓存或请求状态文件。
 - `README.md`：GitHub 英文入口，包含安装、配置和使用条件。
 - `README-zh.md`：GitHub 中文入口。
 
 ## 开发与测试命令
 
-安装依赖：
+安装全部依赖（运行与测试）：
 
 ```powershell
 python -m pip install -r requirements.txt

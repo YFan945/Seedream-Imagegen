@@ -30,6 +30,7 @@ Optional visual references live in [`assets/examples/`](assets/examples/) with u
 - Python 3.10+ and `pip`.
 - A Volcengine Ark API key with access to the selected Seedream model.
 - Network access to the configured Ark endpoint for real requests.
+- One dependency file: `requirements.txt` contains both runtime and test dependencies.
 
 ## Install
 
@@ -116,12 +117,14 @@ Chroma key is for flat, high-saturation backgrounds and solid subjects that do n
 From the cloned repository root:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python -m pytest -q
 python -m compileall -q scripts tests
 python tests\benchmark_remove_chroma_key.py --max-seconds 7
 git diff --check
 ```
+
+`pyproject.toml` provides standardized project metadata and `pytest` configuration (currently the test directory and default reporting); it is not a second dependency-installation entry point. Install all dependencies only from `requirements.txt`.
 
 Tests globally block real network access and never issue a billable Ark request. See [AGENTS.md](AGENTS.md) for contribution rules.
 

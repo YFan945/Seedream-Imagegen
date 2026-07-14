@@ -127,6 +127,22 @@ def test_ci_workflow_covers_supported_python_and_release_gates():
     assert 'requires-python = ">=3.10"' in pyproject
 
 
+def test_dependencies_have_one_documented_installation_entry_point():
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert not (ROOT / "requirements-dev.txt").exists()
+    for dependency in ("Pillow", "pillow-heif", "PyYAML", "pytest"):
+        assert dependency in requirements
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "requirements-dev.txt" not in workflow
+    assert "requirements.txt" in workflow
+
+    for readme in (ROOT / "README.md", ROOT / "README-zh.md"):
+        text = readme.read_text(encoding="utf-8")
+        assert "requirements-dev.txt" not in text
+        assert "requirements.txt" in text
+
+
 def test_readme_logo_is_cropped_and_reasonably_compressed():
     path = ROOT / "logo" / "seedream-imagegen-logo.png"
     assert path.stat().st_size < 500_000

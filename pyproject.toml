@@ -2,8 +2,26 @@
 name = "seedream-imagegen-skill"
 version = "1.2.0"
 description = "Claude Code skill for validated Seedream image generation"
+readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
+authors = [{ name = "YFan945" }]
+keywords = ["claude-code", "doubao", "image-generation", "seedream", "skill"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/YFan945/Seedream-Imagegen"
+Repository = "https://github.com/YFan945/Seedream-Imagegen"
+Issues = "https://github.com/YFan945/Seedream-Imagegen/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra"
