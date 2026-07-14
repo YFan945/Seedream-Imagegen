@@ -3,6 +3,7 @@ output/
 images/
 testout/
 tmp/
+.seedream-prompt-*.txt
 __pycache__/
 .pytest_cache/
 *.egg-info/

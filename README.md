@@ -4,110 +4,121 @@
   <img src="assets/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
-[![validate](https://img.shields.io/badge/validate-passing-brightgreen)](https://github.com/YFan945/Seedream-Imagegen)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE.txt)
+[![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE.txt)
 [![runtime](https://img.shields.io/badge/runtime-Claude%20Code-111827)](https://claude.com/claude-code)
 
-Claude Code skill for generating and editing raster images with **Doubao Seedream 5.0 Lite / Pro** through Volcengine Ark. It provides a validated CLI, model-specific capability checks, dry-run previews, reference-image workflows, batch generation for Lite, and optional chroma-key cleanup.
+A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, request-state recovery, atomic saves, Lite image sets, and optional chroma-key conversion.
 
 > 中文文档：[README-zh.md](README-zh.md)
 
 ## Features
 
 - `generate` for text-to-image, reference-image generation, multi-image fusion, and Lite image sets.
-- `edit` for localized edits that preserve the rest of an existing image.
-- Explicit Lite/Pro capability validation; the selected model is never silently changed.
-- Safe `--dry-run` payload inspection before billable requests.
-- Output collision protection, request-state files, and recovery guidance.
-- `remove_chroma_key.py` for simple solid-color background to alpha conversion.
+- `edit` for explicit edits that preserve unrequested content.
+- Conservative billing state: 408, 429, 5xx, unknown Ark errors, timeouts, disconnects, and uncertain saves remain `ambiguous` and are never retried automatically.
+- Recursive secret redaction, aggregate request limits, exact output preflight, and atomic no-clobber saves.
+- Validated chroma-key matte, foreground recovery, despill, border-connected mode, EXIF transpose, and static HEIF support.
 
 ## Requirements
 
-- Claude Code with skill support.
+- Claude Code with skills support.
 - Python 3.10+ and `pip`.
-- A Volcengine Ark account and an Ark API key with access to Seedream 5.0 Lite or Pro.
-- Network access to the configured Ark endpoint.
+- A Volcengine Ark API key with access to the selected Seedream model.
+- Network access to the configured Ark endpoint for real requests.
 
-Install Python dependencies:
+## Install
 
-```powershell
-python -m pip install -r requirements.txt
-```
+`npx skills` installs to the current project by default; `-g` selects the personal/global scope. This skill targets Claude Code explicitly.
 
-## Install as a Claude Code skill
-
-Recommended:
+Personal install, available in every project:
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen
+npx skills add YFan945/Seedream-Imagegen -g -a claude-code -y
+Test-Path "$HOME\.claude\skills\imagegen\SKILL.md"
+python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
 ```
 
-If your `skills` CLI version requires an explicit global install:
+Project install, run from the target project root:
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen -g
+npx skills add YFan945/Seedream-Imagegen -a claude-code -y
+Test-Path ".claude\skills\imagegen\SKILL.md"
+python -m pip install -r ".claude\skills\imagegen\requirements.txt"
 ```
 
-The repository can also be downloaded without Git:
+If installer output differs, do not assume discovery succeeded: the final required entrypoint is exactly `~/.claude/skills/imagegen/SKILL.md` for a personal install or `.claude/skills/imagegen/SKILL.md` for a project install. Claude Code documents those locations in its [skills guide](https://code.claude.com/docs/en/slash-commands); `npx skills` documents scope and `-a claude-code` in its [CLI repository](https://github.com/vercel-labs/skills).
 
-- ZIP: open [the repository archive page](https://github.com/YFan945/Seedream-Imagegen/archive/refs/heads/main.zip), download and extract it into your Claude Code skills directory.
-- `npx` source copy: `npx degit YFan945/Seedream-Imagegen ~/.claude/skills/imagegen`.
-- Git: `git clone https://github.com/YFan945/Seedream-Imagegen.git ~/.claude/skills/imagegen`.
+Manual Git install:
 
-`npx` is used here as a download/bootstrap method; this project is a Python skill and is not an npm image-generation runtime.
+```powershell
+git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME\.claude\skills\imagegen"
+python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
+```
+
+```bash
+git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME/.claude/skills/imagegen"
+python -m pip install -r "$HOME/.claude/skills/imagegen/requirements.txt"
+```
+
+For ZIP installation, rename the extracted directory to `imagegen` and verify the same final `SKILL.md` path. To uninstall, remove only that installed `imagegen` directory or run `npx skills remove imagegen -g -a claude-code` for a personal CLI-managed install.
 
 ## Configuration
 
-Copy `.env.example` to `.env` in this skill directory and set:
+Copy `.env.example` to `.env` inside the installed skill and set:
 
 ```dotenv
 ARK_API_KEY=your_ark_api_key
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ```
 
-The CLI reads these values for its current process only. You may instead set them in the process environment. Never commit `.env`, paste the key into prompts, or print it in logs.
+The CLI lazily reads only these two keys into an immutable per-run config; it does not modify `os.environ`, Windows environment settings, or `.env`. Never commit `.env` or paste credentials into prompts and logs.
 
-## Usage
+## Free smoke test
 
-Run a free local validation first:
-
-```powershell
-python scripts\image_gen.py generate --model lite --prompt "一只坐在窗边的橘猫，柔和晨光" --out output\cat.png --dry-run
-```
-
-Generate after confirming the dry-run output:
+Run from any project directory. This is local-only and does not require an API key:
 
 ```powershell
-python scripts\image_gen.py generate --model lite --prompt "一只坐在窗边的橘猫，柔和晨光" --out output\cat.png
+$skillDir = "$HOME\.claude\skills\imagegen"
+$projectDir = (Get-Location).Path
+python "$skillDir\scripts\image_gen.py" generate --model lite `
+  --prompt "一只坐在窗边的橘猫，柔和晨光" `
+  --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Edit an existing image:
+Claude should use `${CLAUDE_SKILL_DIR}` for bundled scripts. Agent prompt files now use `.seedream-prompt-<random-id>.txt` directly in the project root, without creating `tmp/seedream`; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
 
-```powershell
-python scripts\image_gen.py edit --model pro --image input\photo.png --prompt "只把背景改成深蓝色；保持人物、姿态和光线不变" --out output\edited.png --dry-run
-```
+`--dry-run` runs only when explicitly supplied; it is not the default for ordinary generation. When web access is needed and no model was selected, use Lite directly. Enable `--web-search` when the user or prompt explicitly requests it or when a recent dated world-situation task depends on current facts; that flag alone does not require dry-run. If web access and Pro capabilities are both explicitly requested, ask the user to choose one.
 
-For multi-line prompts, references, batch generation, model limits, and recovery rules, read [SKILL.md](SKILL.md) and the relevant files under [`references/`](references/).
-
-## Model notes
+## Model boundaries
 
 | Capability | Lite | Pro |
-| --- | --- | --- |
+|---|---|---|
 | Resolution | 2K / 3K / 4K | 1K / 2K |
 | Reference images | Up to 14 | Up to 10 |
-| Image sets, stream, web search | Supported | Not supported |
-| Point/box/doodle/sketch editing | Supported | Preferred for interactive edits |
+| Image sets / stream / web search | Supported | Not supported |
+| Visual controls | Ordinary arrows, boxes, and doodle cues | Precise coordinate/region interaction preferred |
 
-Image generation may incur charges. Confirm model, prompt, output path, and parameters before every real request. Do not automatically retry `pending` or `ambiguous` requests.
+The public Ark pages do not currently expose every Model ID and limit as directly addressable static text. Treat [`references/lite.md`](references/lite.md) and [`references/pro.md`](references/pro.md) as versioned local constraints and re-check official Ark documentation before changing them.
+
+## Chroma-key scope
+
+Chroma key is for flat, high-saturation backgrounds and solid subjects that do not contain the key hue family. It is not a general segmentation tool for hair, smoke, glass, liquids, veils, motion blur, soft shadows, or translucency. See [`references/chroma-key.md`](references/chroma-key.md) for the validated command, alpha contract, failure rules, and three-step delivery check.
 
 ## Development
 
+From the cloned repository root:
+
 ```powershell
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
+python -m compileall -q scripts tests
+python tests\benchmark_remove_chroma_key.py --max-seconds 7
+git diff --check
 ```
 
-Tests never call the real Ark API. See [AGENTS.md](AGENTS.md) for repository and contribution rules.
+Tests globally block real network access and never issue a billable Ark request. See [AGENTS.md](AGENTS.md) for contribution rules.
 
 ## License
 
-See [LICENSE.txt](LICENSE.txt).
+Apache License 2.0. See [LICENSE.txt](LICENSE.txt).

@@ -4,101 +4,121 @@
   <img src="assets/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
-[![validate](https://img.shields.io/badge/validate-passing-brightgreen)](https://github.com/YFan945/Seedream-Imagegen)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE.txt)
+[![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE.txt)
 [![runtime](https://img.shields.io/badge/runtime-Claude%20Code-111827)](https://claude.com/claude-code)
 
-面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目提供经过校验的 CLI、模型能力检查、免费预检、参考图工作流、Lite 组图以及可选的色键转透明处理。
+面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、请求状态恢复、原子保存、Lite 组图和可选色键转透明。
 
 英文文档：[README.md](README.md)
 
 ## 功能
 
 - `generate`：文生图、参考图生图、多图融合和 Lite 组图。
-- `edit`：在保留其他内容的前提下编辑现有图片。
-- 严格校验 Lite/Pro 能力，不会静默替换用户选择的模型。
-- 使用 `--dry-run` 查看脱敏请求预检，不提交也不计费。
-- 防止输出覆盖，保留请求状态并提供失败恢复规则。
-- `remove_chroma_key.py`：将简单的均匀色键背景转换为 alpha 透明。
+- `edit`：只修改明确目标并保持未要求内容不变。
+- 保守计费状态：408、429、5xx、未知 Ark 错误、超时、断连和保存不确定均保留为 `ambiguous`，不自动重试。
+- 递归脱敏、聚合请求上限、精确输出预检和原子 no-clobber 保存。
+- 已验证的色键 matte、foreground recovery、despill、border-connected、EXIF 转正和静态 HEIF 支持。
 
 ## 先置条件
 
-- 已安装支持 skill 的 Claude Code。
+- 支持 skills 的 Claude Code。
 - Python 3.10+ 与 `pip`。
-- 火山方舟账号、可访问 Seedream 5.0 Lite 或 Pro 的 Ark API Key。
-- 能访问 Ark API 地址的网络环境。
+- 可访问所选 Seedream 模型的火山方舟 Ark API Key。
+- 真实请求时可访问 Ark endpoint 的网络环境。
 
-安装 Python 依赖：
+## 安装
 
-```powershell
-python -m pip install -r requirements.txt
-```
+`npx skills` 默认安装到当前 project；`-g` 选择个人 global scope。本 skill 显式锁定 Claude Code。
 
-## 安装 skill
-
-推荐使用专门的 skill 安装方式：
+个人安装，对所有项目可用：
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen
+npx skills add YFan945/Seedream-Imagegen -g -a claude-code -y
+Test-Path "$HOME\.claude\skills\imagegen\SKILL.md"
+python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
 ```
 
-如果当前 `skills` CLI 需要显式全局安装：
+项目安装，在目标项目根目录执行：
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen -g
+npx skills add YFan945/Seedream-Imagegen -a claude-code -y
+Test-Path ".claude\skills\imagegen\SKILL.md"
+python -m pip install -r ".claude\skills\imagegen\requirements.txt"
 ```
 
-其他下载方式：
+安装器输出与预期不同时，不要假定发现成功：个人安装最终必须存在 `~/.claude/skills/imagegen/SKILL.md`，项目安装必须存在 `.claude/skills/imagegen/SKILL.md`。路径依据见 [Claude Code skills 文档](https://code.claude.com/docs/en/slash-commands)，scope 与 `-a claude-code` 依据见 [`npx skills` 仓库](https://github.com/vercel-labs/skills)。
 
-- ZIP：[下载 main 分支 ZIP](https://github.com/YFan945/Seedream-Imagegen/archive/refs/heads/main.zip)，解压到 Claude Code skills 目录。
-- `npx`：`npx degit YFan945/Seedream-Imagegen ~/.claude/skills/imagegen`。
-- Git：`git clone https://github.com/YFan945/Seedream-Imagegen.git ~/.claude/skills/imagegen`。
+手工 Git 安装：
 
-这里的 `npx` 用于下载/引导安装；本项目是 Python skill，不是 npm 生图运行时。
+```powershell
+git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME\.claude\skills\imagegen"
+python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
+```
+
+```bash
+git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME/.claude/skills/imagegen"
+python -m pip install -r "$HOME/.claude/skills/imagegen/requirements.txt"
+```
+
+使用 ZIP 时把解压目录重命名为 `imagegen`，并验证同一最终 `SKILL.md` 路径。卸载时只删除该 `imagegen` 目录；由 CLI 管理的个人安装也可运行 `npx skills remove imagegen -g -a claude-code`。
 
 ## 配置
 
-在 skill 目录复制 `.env.example` 为 `.env`，填写：
+在已安装 skill 中复制 `.env.example` 为 `.env`，填写：
 
 ```dotenv
 ARK_API_KEY=你的_ark_api_key
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ```
 
-也可以只在当前进程环境变量中设置。CLI 不会修改 Windows 全局环境。不要提交 `.env`，不要在 prompt 或日志中暴露 API Key。
+CLI 惰性读取这两个键到每次运行的不可变配置对象，不修改 `os.environ`、Windows 环境设置或 `.env`。不得提交 `.env`，不得把凭据写入 prompt 或日志。
 
-## 使用
+## 免费 smoke test
 
-先执行免费预检：
-
-```powershell
-python scripts\image_gen.py generate --model lite --prompt "一只坐在窗边的橘猫，柔和晨光" --out output\cat.png --dry-run
-```
-
-确认参数后再执行真实请求：
+可从任意项目目录运行；只做本地预检，不需要 API Key：
 
 ```powershell
-python scripts\image_gen.py generate --model lite --prompt "一只坐在窗边的橘猫，柔和晨光" --out output\cat.png
+$skillDir = "$HOME\.claude\skills\imagegen"
+$projectDir = (Get-Location).Path
+python "$skillDir\scripts\image_gen.py" generate --model lite `
+  --prompt "一只坐在窗边的橘猫，柔和晨光" `
+  --out "$projectDir\output\cat.png" --dry-run
 ```
 
-编辑现有图片：
+Claude 调用 bundled scripts 时应使用 `${CLAUDE_SKILL_DIR}`。agent prompt 临时文件直接使用项目根目录 `.seedream-prompt-<random-id>.txt`，不再创建 `tmp/seedream`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
 
-```powershell
-python scripts\image_gen.py edit --model pro --image input\photo.png --prompt "只把背景改成深蓝色；保持人物、姿态和光线不变" --out output\edited.png --dry-run
-```
+`--dry-run` 只在显式传参时执行，不是普通生成的默认步骤。需要联网且未指定模型时直接使用 Lite；用户或 prompt 明确要求联网，以及带有具体近期日期的世界局势等时效任务，都启用 `--web-search`，该参数本身不强制要求 dry-run。联网与 Pro 能力同时被明确要求时，应先让用户二选一。
 
-详细的模型限制、提示词、参考图、组图和状态恢复规则见 [SKILL.md](SKILL.md) 及 [`references/`](references/)。
+## 模型边界
 
-生图请求可能产生费用。每次真实请求前确认模型、prompt、参数和输出路径；遇到 `pending` 或 `ambiguous` 状态必须停止，不要自动重试。
+| 能力 | Lite | Pro |
+|---|---|---|
+| 分辨率 | 2K / 3K / 4K | 1K / 2K |
+| 参考图 | 最多 14 张 | 最多 10 张 |
+| 组图 / stream / web search | 支持 | 不支持 |
+| 视觉控制 | 普通箭头、框选和涂鸦提示 | 优先用于精准坐标/区域交互 |
+
+当前公开 Ark 页面无法把每个 Model ID 和限制定位到可直接引用的静态正文。[`references/lite.md`](references/lite.md) 与 [`references/pro.md`](references/pro.md) 是版本化本地约束；修改前必须重新核对官方 Ark 文档。
+
+## 色键边界
+
+色键只适用于平坦、高饱和背景和不含键色色相族的实心主体，不是毛发、烟雾、玻璃、液体、薄纱、运动模糊、软阴影或半透明对象的通用分割工具。受校验命令、alpha 契约、失败规则和三项交付检查见 [`references/chroma-key.md`](references/chroma-key.md)。
 
 ## 开发测试
 
+在克隆仓库根目录执行：
+
 ```powershell
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
+python -m compileall -q scripts tests
+python tests\benchmark_remove_chroma_key.py --max-seconds 7
+git diff --check
 ```
 
-测试不会调用真实 Ark API。仓库协作规则见 [AGENTS.md](AGENTS.md)。
+测试全局阻断真实网络，不会发起计费 Ark 请求。协作规则见 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
 
-见 [LICENSE.txt](LICENSE.txt)。
+Apache License 2.0，见 [LICENSE.txt](LICENSE.txt)。

@@ -2,46 +2,59 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 提交者 | yfan945 |
-| 提交 Hash | `071c0d6` |
+| 提交者 | yfan945（工作区改动） |
+| 提交 Hash | `efedb72`（基线） |
 
 ## 今日概述
 
-> 为 Seedream Imagegen 增加新的项目 Logo，并按照 GitHub 仓库常见格式完善中英文 README 顶部品牌区。同步移除旧 Logo 资源，保留安装、配置和使用说明不变。
+> 完成一次面向发布的安全与可维护性修复：强化 Seedream CLI 的请求状态、路径、配置、脱敏和输出保护；重做色键处理的 alpha、despill、auto-key 与格式安全边界；同步补齐文档契约、开发依赖、CI 和测试覆盖。中英文 README 与项目元数据也已更新到下一版本。
 
 ## 变更内容
 
 ### feat · New Feature
 
-- **项目品牌**：使用 imagegen 生成新的 `Seedream Imagegen` 横向 Logo，表达种子、光圈和生成火花的概念（`assets/seedream-imagegen-logo.png`）。
+- **可靠色键工作流**：新增色键转透明参考和 border-connected/alpha 安全契约，支持明确的失败恢复边界（`scripts/remove_chroma_key.py`、`references/chroma-key.md`）。
+- **持续集成**：新增覆盖 Windows/Linux 与 Python 3.10–3.13 的 GitHub Actions 验证流程（`.github/workflows/ci.yml`）。
+
+### fix · Bug Fix
+
+- **图片处理**：修复 soft matte、despill、feather、source alpha、auto-key 和静态图片格式处理中的错误交付风险（`scripts/remove_chroma_key.py`）。
+- **请求安全**：修复 HTTP 错误状态分类、ambiguous 请求恢复、配置加载、输出路径、payload 资源上限和递归脱敏问题（`scripts/image_gen.py`）。
 
 ### docs · Documentation
 
-- **GitHub README**：在中英文 README 顶部加入 `validate / license / runtime` badges，并替换旧图片引用（`README.md`、`README-zh.md`）。
+- **运行契约**：同步更新中英文 README、SKILL 与 references，明确绝对路径、安装 scope、模型能力、计费风险和透明背景边界。
+- **项目品牌**：保留新的 `Seedream Imagegen` Logo，并清理旧品牌资源（`assets/seedream-imagegen-logo.png`）。
 
-### chore · Cleanup
+### test · Test
 
-- **资源清理**：删除旧的 `assets/imagegen.png` 与 `assets/imagegen-small.svg`，避免仓库保留重复品牌资源。
+- **回归覆盖**：扩展 CLI 与色键测试，并新增文档契约测试（`tests/`）。
+
+### chore · Chore
+
+- **开发配置**：新增 `pyproject.toml` 版本元数据、开发依赖和忽略规则调整。
 
 ## 文件更改
 
 | File | Changes |
 | --- | --- |
-| `README.md` | +7 -1 |
-| `README-zh.md` | +7 -1 |
-| `assets/seedream-imagegen-logo.png` | +723659 bytes |
-| `assets/imagegen.png` | deleted |
-| `assets/imagegen-small.svg` | deleted |
+| `scripts/image_gen.py` | CLI 安全与恢复逻辑大幅扩展 |
+| `scripts/remove_chroma_key.py` | 色键算法与图片安全逻辑大幅扩展 |
+| `tests/` | 新增与扩展 CLI、色键和文档契约测试 |
+| `README.md` / `README-zh.md` | 同步安装、能力和安全说明 |
+| `references/` | 新增色键说明并更新 CLI、模型和 prompt 约束 |
+| `.github/workflows/ci.yml` | 新增 CI 验证流程 |
+| `pyproject.toml` / `requirements-dev.txt` | 新增版本与开发依赖配置 |
 
 ## 未完成事项
 
-- 尚未在 GitHub 页面中进行浏览器端渲染截图验证；推送后可检查 Logo 与 badges 在窄屏下的显示效果。
+- 尚未在 GitHub 页面中进行浏览器端渲染截图验证；推送后可检查 Logo、badges 和 CI 状态。
 
 ## 明日计划
 
-- 检查远程 README 的 Logo、badges 和中英文链接渲染。
-- 如仓库体积或加载速度需要优化，再评估压缩 Logo 资源。
+- 检查远程 README、CI 和中英文链接渲染。
+- 依据真实使用反馈继续校准色键算法与跨平台路径边界。
 
 ## 备注
 
-- Logo 使用纯白背景 PNG，适合当前 README 的白色内容区。
+- 本次验证未发起真实 Ark 请求；所有测试使用 mock 或 dry-run。

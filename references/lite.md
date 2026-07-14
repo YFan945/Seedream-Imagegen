@@ -19,7 +19,7 @@
 - 支持文生图、单/多图编辑和融合、组图、联网搜索、流式输出。
 - 最多 14 张参考图；参考图数量 + 计划输出数量不超过 15。
 - 支持 2K、3K、4K 或合法自定义尺寸；不支持 1K。
-- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
+- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
 
 ## 输出尺寸
 
@@ -39,7 +39,7 @@
 
 ## Payload
 
-通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。`image` 为按顺序传入的图片数组；prompt 必须说明图一、图二的角色。
+通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须说明图一、图二的角色。
 
 单图显式发送 `"sequential_image_generation":"disabled"`。默认 `output_format` 为 PNG；`response_format` 为 `url` 或 `b64_json`。不要发送 Pro 专属或未被脚本支持的字段。
 
@@ -56,7 +56,7 @@
 
 ## 联网搜索
 
-发送 `{"tools":[{"type":"web_search"}]}`。模型自行决定是否搜索，实际次数见 `usage.tool_usage.web_search`。搜索用于时效事实核实；仍须在成图后检查标题、日期、数字和文字，不能将模型搜索视为内容正确性的证明。
+用户或 prompt 明确要求联网时发送 `{"tools":[{"type":"web_search"}]}`；未明确要求但任务明显依赖最新事实时也可按需发送。模型自行决定是否实际搜索，实际次数见 `usage.tool_usage.web_search`。搜索用于时效事实核实；仍须在成图后检查标题、日期、数字和文字，不能将模型搜索视为内容正确性的证明。单独使用 `--web-search` 不强制要求 dry-run。
 
 ## 流式事件
 
@@ -77,4 +77,4 @@
 - `response_format` 支持 `url`/`b64_json`，`output_format` 支持 png/jpeg；URL 仅保留 24 小时，必须立即下载并校验。
 - 保存前验证真实格式、尺寸及单图数量；单图必须恰好一项，组图不得超过计划上限。输出或响应不确定时保留请求状态，停止而非重试。
 
-官方依据：[Seedream 4.0-5.0 教程](https://docs.volcengine.com/docs/82379/1824121?lang=zh)与[图片生成 API](https://api.volcengine.com/api-docs/view?action=ImageGenerations&serviceCode=ark&version=2024-01-01)，复核日期 2026-07-14。
+官方依据：[Seedream 4.0-5.0 教程](https://docs.volcengine.com/docs/82379/1824121?lang=zh)与[图片生成 API](https://api.volcengine.com/api-docs/view?action=ImageGenerations&serviceCode=ark&version=2024-01-01)，复核日期 2026-07-14。Model ID、14 张输入和部分精确上限在当前公开页面中缺少可直接逐项定位的静态正文，属于可追溯性缺口；修改这些高风险常量前必须重新核对官方控制台/API 说明。

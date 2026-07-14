@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter, deque
+from dataclasses import dataclass
 from io import BytesIO
 import math
 import os
@@ -13,37 +15,52 @@ from statistics import median
 import sys
 import tempfile
 from typing import TypeAlias
+import warnings
 
 
 Color: TypeAlias = tuple[int, int, int]
 ALPHA_NOISE_FLOOR = 8
 KEY_DOMINANCE_THRESHOLD = 16.0
+MAX_INPUT_BYTES = 30_000_000
+MAX_INPUT_PIXELS = 36_000_000
+AUTO_KEY_QUANTIZATION = 16
+AUTO_KEY_CLUSTER_RADIUS = 24
+AUTO_KEY_MIN_SHARE = 0.70
+
+
+@dataclass(frozen=True, slots=True)
+class ChromaStats:
+    total: int
+    source_transparent: int
+    key_matched: int
+    final_transparent: int
+    partial: int
 
 
 def _die(message: str, code: int = 1) -> None:
-    print(f"Error: {message}", file=sys.stderr)
+    print(f"错误：{message}", file=sys.stderr)
     raise SystemExit(code)
 
 
 def _load_pillow():
     try:
-        from PIL import Image, ImageFilter, UnidentifiedImageError
+        from PIL import Image, ImageChops, ImageFilter, ImageOps, UnidentifiedImageError
     except ImportError:
-        _die("Pillow is required. Install the dependencies listed in requirements.txt.")
-    return Image, ImageFilter, UnidentifiedImageError
+        _die("缺少 Pillow；请安装 requirements.txt 中声明的依赖。")
+    return Image, ImageFilter, ImageChops, ImageOps, UnidentifiedImageError
 
 
 def _parse_key_color(raw: str) -> Color:
     match = re.fullmatch(r"#?([0-9a-fA-F]{6})", raw.strip())
     if not match:
-        _die("--key-color must be a six-digit RGB hex value such as #00ff00.")
+        _die("--key-color 必须是六位 RGB 十六进制值，例如 #00ff00。")
     value = match.group(1)
     return tuple(int(value[index : index + 2], 16) for index in (0, 2, 4))  # type: ignore[return-value]
 
 
 def _validate_number(value: float, option: str, minimum: float, maximum: float) -> None:
     if not math.isfinite(value) or not minimum <= value <= maximum:
-        _die(f"{option} must be a finite number between {minimum:g} and {maximum:g}.")
+        _die(f"{option} 必须是 {minimum:g} 到 {maximum:g} 之间的有限数值。")
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -53,19 +70,32 @@ def _validate_args(args: argparse.Namespace) -> None:
     _validate_number(args.edge_feather, "--edge-feather", 0, 64)
     _validate_number(args.edge_contract, "--edge-contract", 0, 16)
     if args.soft_matte and args.transparent_threshold >= args.opaque_threshold:
-        _die("--transparent-threshold must be lower than --opaque-threshold.")
+        _die("--transparent-threshold 必须小于 --opaque-threshold。")
+    if getattr(args, "auto_key", "none") == "none" and (
+        args.soft_matte or getattr(args, "spill_cleanup", False)
+    ):
+        key = _parse_key_color(getattr(args, "key_color", "#00ff00"))
+        if max(key) - min(key) < 96:
+            _die("--soft-matte/--despill 只支持高饱和色键；灰、白、黑键色不受支持。")
 
     source = Path(args.input)
     if not source.is_file():
-        _die(f"Input image not found or not a file: {source}")
+        _die(f"输入图片不存在或不是文件：{source}")
+    try:
+        if source.stat().st_size > MAX_INPUT_BYTES:
+            _die(f"输入图片超过 {MAX_INPUT_BYTES} bytes 安全上限：{source}")
+    except OSError as error:
+        _die(f"无法读取输入图片属性：{source}（{error}）")
 
     output = Path(args.out)
+    if source.resolve(strict=False) == output.resolve(strict=False):
+        _die("--input 与 --out 不得指向同一路径。")
     if output.suffix.lower() not in {".png", ".webp"}:
-        _die("--out must end in .png or .webp to preserve alpha.")
+        _die("--out 必须以 .png 或 .webp 结尾以保留 alpha。")
     if output.exists() and not args.force:
-        _die(f"Output already exists: {output} (use --force to overwrite)")
+        _die(f"输出已存在：{output}（仅在明确授权后使用 --force 覆盖）")
     if output.exists() and not output.is_file():
-        _die(f"Output path is not a file: {output}")
+        _die(f"输出路径不是文件：{output}")
 
 
 def _channel_distance(left: Color, right: Color) -> int:
@@ -106,22 +136,39 @@ def _key_dominance(rgb: Color, key: Color) -> float:
     return float(key_strength - other_strength)
 
 
+def _single_spill_colored_alpha(rgb: Color, key: Color) -> int | None:
+    spill = _spill_channels(key)
+    other = [index for index in range(3) if index not in spill]
+    if len(spill) != 1 or len(other) < 2:
+        return None
+    other_values = [rgb[index] for index in other]
+    if max(other_values) - min(other_values) <= KEY_DOMINANCE_THRESHOLD:
+        return None
+    spill_index = spill[0]
+    key_drop = 255 * (1.0 - rgb[spill_index] / max(1.0, key[spill_index]))
+    non_key_signal = max(other_values)
+    if abs(key_drop - non_key_signal) > KEY_DOMINANCE_THRESHOLD:
+        return None
+    return _clamp_channel(max(key_drop, non_key_signal))
+
+
 def _dominance_alpha(rgb: Color, key: Color) -> int:
+    colored_alpha = _single_spill_colored_alpha(rgb, key)
+    if colored_alpha is not None:
+        return colored_alpha
     dominance = _key_dominance(rgb, key)
     if dominance <= 0:
         return 255
-    spill = _spill_channels(key)
-    other = [index for index in range(3) if index not in spill]
-    other_strength = max((rgb[index] for index in other), default=0)
-    denominator = max(1.0, max(key) - other_strength)
-    return _clamp_channel(255 * (1.0 - min(1.0, dominance / denominator)))
+    key_reference = max(1.0, _key_dominance(key, key))
+    return _clamp_channel(255 * (1.0 - min(1.0, dominance / key_reference)))
 
 
 def _is_key_edge(rgb: Color, key: Color, distance: int, opaque_threshold: float) -> bool:
     """Return true only for pixels plausibly belonging to the key-colored edge."""
-    if distance > opaque_threshold:
-        return False
-    return distance <= 32 or _key_dominance(rgb, key) >= KEY_DOMINANCE_THRESHOLD
+    del opaque_threshold
+    if distance <= 32 or _key_dominance(rgb, key) > 0:
+        return True
+    return _single_spill_colored_alpha(rgb, key) is not None
 
 
 def _despill(rgb: Color, key: Color) -> Color:
@@ -136,6 +183,57 @@ def _despill(rgb: Color, key: Color) -> Color:
     return tuple(channels)  # type: ignore[return-value]
 
 
+def _recover_foreground(rgb: Color, key: Color, matte_alpha: int) -> Color:
+    """Undo the known key contribution for a straight-alpha edge pixel."""
+    if matte_alpha <= 0 or matte_alpha >= 255:
+        return rgb
+    alpha = matte_alpha / 255.0
+    background = 1.0 - alpha
+    return tuple(
+        _clamp_channel((channel - background * key_channel) / alpha)
+        for channel, key_channel in zip(rgb, key)
+    )  # type: ignore[return-value]
+
+
+def _retain_border_connected_matte(matte):
+    """Keep only non-opaque matte pixels connected to an image border."""
+    Image, _, _, _, _ = _load_pillow()
+    width, height = matte.size
+    values = matte.tobytes()
+    connected = bytearray(width * height)
+    queue: deque[int] = deque()
+
+    def enqueue(index: int) -> None:
+        if not connected[index] and values[index] < 255:
+            connected[index] = 1
+            queue.append(index)
+
+    for x in range(width):
+        enqueue(x)
+        enqueue((height - 1) * width + x)
+    for y in range(height):
+        enqueue(y * width)
+        enqueue(y * width + width - 1)
+
+    while queue:
+        index = queue.popleft()
+        x = index % width
+        if x:
+            enqueue(index - 1)
+        if x + 1 < width:
+            enqueue(index + 1)
+        if index >= width:
+            enqueue(index - width)
+        if index + width < width * height:
+            enqueue(index + width)
+
+    output = bytearray([255]) * (width * height)
+    for index, is_connected in enumerate(connected):
+        if is_connected:
+            output[index] = values[index]
+    return Image.frombytes("L", matte.size, bytes(output))
+
+
 def _apply_alpha_to_image(
     image,
     *,
@@ -145,50 +243,137 @@ def _apply_alpha_to_image(
     soft_matte: bool,
     transparent_threshold: float,
     opaque_threshold: float,
-) -> int:
-    pixels = image.load()
-    transparent_count = 0
+    edge_contract: int = 0,
+    edge_feather: float = 0.0,
+    border_connected: bool = False,
+) -> ChromaStats:
+    del transparent_threshold, opaque_threshold
+    Image, _, ImageChops, _, _ = _load_pillow()
+    from PIL import ImageMath
 
-    for y in range(image.height):
-        for x in range(image.width):
-            red, green, blue, source_alpha = pixels[x, y]
-            rgb = (red, green, blue)
-            distance = _channel_distance(rgb, key)
-            key_edge = _is_key_edge(rgb, key, distance, opaque_threshold)
+    bands = list(image.split())
+    source_rgb = bands[:3]
+    source_alpha = bands[3]
+    source_transparent = source_alpha.histogram()[0]
+    distances = [
+        ImageChops.difference(band, Image.new("L", image.size, key_channel))
+        for band, key_channel in zip(source_rgb, key)
+    ]
+    distance = ImageChops.lighter(ImageChops.lighter(distances[0], distances[1]), distances[2])
+    hard_matte = distance.point(lambda value: 0 if value <= tolerance else 255)
 
-            if soft_matte and key_edge:
-                matte_alpha = min(
-                    _soft_alpha(distance, transparent_threshold, opaque_threshold),
-                    _dominance_alpha(rgb, key),
+    if soft_matte:
+        spill = _spill_channels(key)
+        other = [index for index in range(3) if index not in spill]
+        spill_strength = source_rgb[spill[0]]
+        for index in spill[1:]:
+            spill_strength = ImageChops.darker(spill_strength, source_rgb[index])
+        other_strength = source_rgb[other[0]] if other else Image.new("L", image.size, 0)
+        for index in other[1:]:
+            other_strength = ImageChops.lighter(other_strength, source_rgb[index])
+        dominance = ImageChops.subtract(spill_strength, other_strength)
+        key_reference = max(1.0, _key_dominance(key, key))
+        neutral_matte = dominance.point(
+            lambda value: _clamp_channel(255 * (1.0 - min(1.0, value / key_reference)))
+        )
+        matte = neutral_matte
+
+        if len(spill) == 1 and len(other) >= 2:
+            high = ImageChops.lighter(source_rgb[other[0]], source_rgb[other[1]])
+            low = ImageChops.darker(source_rgb[other[0]], source_rgb[other[1]])
+            spread = ImageChops.subtract(high, low)
+            spill_index = spill[0]
+            key_drop = source_rgb[spill_index].point(
+                lambda value: _clamp_channel(
+                    255 * (1.0 - value / max(1.0, key[spill_index]))
                 )
-            else:
-                matte_alpha = 0 if distance <= tolerance else 255
+            )
+            consistency = ImageChops.difference(key_drop, high)
+            spread_mask = spread.point(
+                lambda value: 255 if value > KEY_DOMINANCE_THRESHOLD else 0
+            )
+            consistency_mask = consistency.point(
+                lambda value: 255 if value <= KEY_DOMINANCE_THRESHOLD else 0
+            )
+            colored_mask = ImageChops.multiply(spread_mask, consistency_mask)
+            colored_matte = ImageChops.lighter(key_drop, high)
+            matte = Image.composite(colored_matte, neutral_matte, colored_mask)
+    else:
+        matte = hard_matte
 
-            alpha = round(matte_alpha * source_alpha / 255)
-            if 0 < alpha <= ALPHA_NOISE_FLOOR:
-                alpha = 0
-            if alpha == 0:
-                pixels[x, y] = (0, 0, 0, 0)
-                transparent_count += 1
-                continue
+    matte = matte.point(
+        lambda value: 0 if 0 < value <= ALPHA_NOISE_FLOOR else value
+    )
+    if border_connected:
+        matte = _retain_border_connected_matte(matte)
+    key_matched = matte.histogram()[0]
+    partial_mask = matte.point(lambda value: 255 if 0 < value < 255 else 0)
+    safe_alpha = matte.point(lambda value: max(1, value))
+    recovered_rgb = []
+    for band, key_channel in zip(source_rgb, key):
+        recovered = ImageMath.lambda_eval(
+            lambda args, key_channel=key_channel: (
+                args["channel"] * 255 - (255 - args["alpha"]) * key_channel
+            )
+            / args["alpha"],
+            channel=band,
+            alpha=safe_alpha,
+        ).convert("L")
+        recovered_rgb.append(recovered)
 
-            if spill_cleanup and key_edge:
-                red, green, blue = _despill(rgb, key)
-            pixels[x, y] = (red, green, blue, alpha)
+    if spill_cleanup:
+        spill = _spill_channels(key)
+        other = [index for index in range(3) if index not in spill]
+        if other:
+            cap = recovered_rgb[other[0]]
+            for index in other[1:]:
+                cap = ImageChops.lighter(cap, recovered_rgb[index])
+            for index in spill:
+                recovered_rgb[index] = ImageChops.darker(recovered_rgb[index], cap)
 
-    return transparent_count
+    output_rgb = [
+        Image.composite(recovered, original, partial_mask)
+        for recovered, original in zip(recovered_rgb, source_rgb)
+    ]
+    transparent_mask = matte.point(lambda value: 255 if value == 0 else 0)
+    black = Image.new("L", image.size, 0)
+    output_rgb = [Image.composite(black, band, transparent_mask) for band in output_rgb]
+    image.paste(Image.merge("RGBA", (*output_rgb, source_alpha)))
+
+    _transform_alpha(
+        image,
+        contract=edge_contract,
+        feather=edge_feather,
+        source_alpha=source_alpha,
+        chroma_matte=matte,
+    )
+    final_histogram = image.getchannel("A").histogram()
+    return ChromaStats(
+        total=image.width * image.height,
+        source_transparent=source_transparent,
+        key_matched=key_matched,
+        final_transparent=final_histogram[0],
+        partial=sum(final_histogram[1:255]),
+    )
 
 
-def _transform_alpha(image, *, contract: int, feather: float):
-    if not contract and not feather:
-        return image
-    _, ImageFilter, _ = _load_pillow()
-    alpha = image.getchannel("A")
+def _transform_alpha(
+    image,
+    *,
+    contract: int,
+    feather: float,
+    source_alpha=None,
+    chroma_matte=None,
+):
+    Image, ImageFilter, ImageChops, _, _ = _load_pillow()
+    source_alpha = source_alpha or image.getchannel("A")
+    alpha = chroma_matte or Image.new("L", image.size, 255)
     for _ in range(contract):
         alpha = alpha.filter(ImageFilter.MinFilter(3))
     if feather:
-        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=feather))
-    image.putalpha(alpha)
+        blurred = alpha.filter(ImageFilter.GaussianBlur(radius=feather))
+        alpha = ImageChops.darker(alpha, blurred)
+    image.putalpha(ImageChops.multiply(source_alpha, alpha))
     return image
 
 
@@ -221,20 +406,68 @@ def _iter_border_pixels(image, mode: str):
             yield pixels[width - 1 - offset, y]
 
 
+def _corner_sample_groups(image):
+    pixels = image.load()
+    width, height = image.size
+    patch = max(1, min(8, (width + 1) // 2, (height + 1) // 2))
+    boxes = (
+        (0, 0, patch, patch),
+        (width - patch, 0, width, patch),
+        (0, height - patch, patch, height),
+        (width - patch, height - patch, width, height),
+    )
+    for left, top, right, bottom in boxes:
+        yield [
+            pixels[x, y][:3]
+            for y in range(top, bottom)
+            for x in range(left, right)
+            if pixels[x, y][3] > 0
+        ]
+
+
+def _dominant_sample(samples: list[Color], min_share: float) -> Color | None:
+    if not samples:
+        return None
+    buckets = Counter(
+        tuple(channel // AUTO_KEY_QUANTIZATION for channel in sample)
+        for sample in samples
+    )
+    dominant_bucket, bucket_count = buckets.most_common(1)[0]
+    if bucket_count / len(samples) < min_share:
+        return None
+    members = [
+        sample
+        for sample in samples
+        if tuple(channel // AUTO_KEY_QUANTIZATION for channel in sample) == dominant_bucket
+    ]
+    center = tuple(round(median(sample[channel] for sample in members)) for channel in range(3))
+    return min(members, key=lambda sample: _channel_distance(sample, center))
+
+
 def _sample_border_key(image, mode: str) -> Color:
     # Ignore fully transparent pixels: their hidden RGB values are not meaningful.
     samples = [pixel[:3] for pixel in _iter_border_pixels(image, mode) if pixel[3] > 0]
     if not samples:
-        _die("Could not sample a visible key color from the image border.")
-    return tuple(round(median(sample[channel] for sample in samples)) for channel in range(3))  # type: ignore[return-value]
-
-
-def _alpha_counts(image) -> tuple[int, int, int]:
-    alphas = image.getchannel("A").tobytes()
-    total = image.width * image.height
-    transparent = sum(alpha == 0 for alpha in alphas)
-    partial = sum(0 < alpha < 255 for alpha in alphas)
-    return total, transparent, partial
+        _die("无法从图片边框采样可见键色。")
+    candidate = _dominant_sample(samples, AUTO_KEY_MIN_SHARE)
+    if candidate is None:
+        _die("自动取色检测到多峰或不一致边框；请显式传入 --key-color。")
+    cluster = [
+        sample
+        for sample in samples
+        if _channel_distance(sample, candidate) <= AUTO_KEY_CLUSTER_RADIUS
+    ]
+    if len(cluster) / len(samples) < AUTO_KEY_MIN_SHARE:
+        _die("自动取色置信度不足；边框颜色不够均匀，请显式传入 --key-color。")
+    if max(candidate) - min(candidate) < 96:
+        _die("自动取色只支持高饱和色键；请显式选择绿色、洋红、蓝色或青色色键。")
+    for corner_samples in _corner_sample_groups(image):
+        if not corner_samples:
+            continue
+        corner_key = _dominant_sample(corner_samples, 0.60)
+        if corner_key is None or _channel_distance(corner_key, candidate) > AUTO_KEY_CLUSTER_RADIUS:
+            _die("自动取色的四角背景不一致；请显式传入 --key-color。")
+    return candidate
 
 
 def _encode_image(image, suffix: str) -> bytes:
@@ -246,7 +479,31 @@ def _encode_image(image, suffix: str) -> bytes:
     return buffer.getvalue()
 
 
-def _atomic_write(output: Path, data: bytes) -> None:
+def _enable_heif_support() -> None:
+    try:
+        from pillow_heif import register_heif_opener
+    except ImportError:
+        _die("读取 HEIC/HEIF 需要 pillow-heif；请安装 requirements.txt 中的依赖。")
+    register_heif_opener()
+
+
+def _validate_encoded_image(data: bytes, suffix: str, expected_size: tuple[int, int]) -> None:
+    Image, _, _, _, UnidentifiedImageError = _load_pillow()
+    expected_format = "PNG" if suffix == ".png" else "WEBP"
+    try:
+        with Image.open(BytesIO(data)) as decoded:
+            decoded.load()
+            if decoded.format != expected_format:
+                _die(f"输出编码格式错误：期望 {expected_format}，实际 {decoded.format}。")
+            if decoded.size != expected_size:
+                _die(f"输出尺寸错误：期望 {expected_size}，实际 {decoded.size}。")
+            if "A" not in decoded.getbands():
+                _die("输出图片缺少 alpha 通道。")
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        _die(f"输出图片无法重新解码：{error}")
+
+
+def _atomic_write(output: Path, data: bytes, *, force: bool) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -255,25 +512,48 @@ def _atomic_write(output: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, output)
+        if force:
+            os.replace(temporary, output)
+            temporary = None
+        else:
+            os.link(temporary, output)
+    except FileExistsError:
+        _die(f"输出已存在，未覆盖：{output}")
+    except OSError as error:
+        _die(f"无法写入输出图片：{output}（{error}）")
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
 def _remove_chroma_key(args: argparse.Namespace) -> None:
-    Image, _, UnidentifiedImageError = _load_pillow()
+    Image, _, _, ImageOps, UnidentifiedImageError = _load_pillow()
     source = Path(args.input)
     output = Path(args.out)
     try:
-        with Image.open(source) as opened:
-            opened.load()
-            image = opened.convert("RGBA")
-    except (UnidentifiedImageError, OSError, ValueError) as error:
-        _die(f"Could not read input image: {error}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            if source.suffix.lower() in {".heic", ".heif"}:
+                _enable_heif_support()
+            with Image.open(source) as opened:
+                if getattr(opened, "n_frames", 1) != 1:
+                    _die("只支持静态图片；动画或多帧输入不会被静默截取首帧。")
+                width, height = opened.size
+                if width * height > MAX_INPUT_PIXELS:
+                    _die(f"输入图片超过 {MAX_INPUT_PIXELS} pixels 安全上限。")
+                image = ImageOps.exif_transpose(opened).convert("RGBA")
+                image.load()
+    except (
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        OSError,
+        ValueError,
+    ) as error:
+        _die(f"无法读取输入图片：{error}")
 
     key = _sample_border_key(image, args.auto_key) if args.auto_key != "none" else _parse_key_color(args.key_color)
-    matched = _apply_alpha_to_image(
+    stats = _apply_alpha_to_image(
         image,
         key=key,
         tolerance=args.tolerance,
@@ -281,35 +561,52 @@ def _remove_chroma_key(args: argparse.Namespace) -> None:
         soft_matte=args.soft_matte,
         transparent_threshold=args.transparent_threshold,
         opaque_threshold=args.opaque_threshold,
+        edge_contract=args.edge_contract,
+        edge_feather=args.edge_feather,
+        border_connected=args.border_connected,
     )
-    _transform_alpha(image, contract=args.edge_contract, feather=args.edge_feather)
-    total, transparent, partial = _alpha_counts(image)
-    _atomic_write(output, _encode_image(image, output.suffix.lower()))
+    try:
+        encoded = _encode_image(image, output.suffix.lower())
+    except (OSError, ValueError) as error:
+        _die(f"无法编码输出图片：{error}")
+    _validate_encoded_image(encoded, output.suffix.lower(), image.size)
+    _atomic_write(output, encoded, force=args.force)
 
-    print(f"Wrote {output}")
-    print(f"Key color: #{key[0]:02x}{key[1]:02x}{key[2]:02x}")
-    print(f"Alpha: {transparent} transparent, {partial} partial, {total} total")
-    if matched == 0:
-        print("Warning: no pixels matched the key color before edge processing.", file=sys.stderr)
+    print(f"已写入：{output}")
+    print(f"键色：#{key[0]:02x}{key[1]:02x}{key[2]:02x}")
+    print(
+        "Alpha："
+        f"source-transparent={stats.source_transparent}，"
+        f"key-matched={stats.key_matched}，"
+        f"final-transparent={stats.final_transparent}，"
+        f"partial={stats.partial}，total={stats.total}"
+    )
+    if stats.final_transparent == stats.total:
+        print("警告：输出图片为全透明，请核对键色和阈值。", file=sys.stderr)
+    elif stats.final_transparent == 0 and stats.partial == 0:
+        print("警告：输出图片为全不透明，可能没有匹配到背景。", file=sys.stderr)
+    if stats.key_matched == 0:
+        print("警告：边缘处理前没有像素匹配键色。", file=sys.stderr)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Replace a flat chroma-key background with transparent alpha."
+        description="将平坦色键背景转换为透明 alpha。"
     )
-    parser.add_argument("--input", required=True, help="Input image path.")
-    parser.add_argument("--out", required=True, help="Output .png or .webp path.")
-    parser.add_argument("--key-color", default="#00ff00", help="Key color as RGB hex (default: #00ff00).")
-    parser.add_argument("--auto-key", choices=("none", "corners", "border"), default="none", help="Sample the key from corners or the full border.")
-    parser.add_argument("--tolerance", type=int, default=12, help="Hard-key channel tolerance, 0-255 (default: 12).")
-    parser.add_argument("--soft-matte", action="store_true", help="Create a smooth edge alpha ramp.")
-    parser.add_argument("--transparent-threshold", type=float, default=12.0, help="Soft-matte transparent distance (default: 12).")
-    parser.add_argument("--opaque-threshold", type=float, default=96.0, help="Soft-matte opaque distance (default: 96).")
-    parser.add_argument("--edge-contract", type=int, default=0, help="Contract alpha by 0-16 pixels.")
-    parser.add_argument("--edge-feather", type=float, default=0.0, help="Blur alpha by radius 0-64.")
-    parser.add_argument("--despill", dest="spill_cleanup", action="store_true", help="Reduce key-color spill on matched edge pixels.")
+    parser.add_argument("--input", required=True, help="输入图片路径")
+    parser.add_argument("--out", required=True, help="输出 .png 或 .webp 路径")
+    parser.add_argument("--key-color", default="#00ff00", help="RGB 十六进制键色，默认 #00ff00")
+    parser.add_argument("--auto-key", choices=("none", "corners", "border"), default="none", help="从四角或完整边框自动取色")
+    parser.add_argument("--tolerance", type=int, default=12, help="hard key 通道容差 0-255，默认 12")
+    parser.add_argument("--soft-matte", action="store_true", help="生成连续 soft matte 并恢复 partial RGB")
+    parser.add_argument("--transparent-threshold", type=float, default=12.0, help="兼容参数；soft matte 使用色度模型，不再以距离阈值估算 alpha")
+    parser.add_argument("--opaque-threshold", type=float, default=96.0, help="兼容参数；soft matte 使用色度模型，不再以距离阈值估算 alpha")
+    parser.add_argument("--edge-contract", type=int, default=0, help="向内收缩 matte 0-16 pixels")
+    parser.add_argument("--edge-feather", type=float, default=0.0, help="仅向主体内侧柔化 matte，radius 0-64")
+    parser.add_argument("--border-connected", action="store_true", help="仅移除与图片边框连通的键色区域")
+    parser.add_argument("--despill", dest="spill_cleanup", action="store_true", help="只对 partial edge 执行保守色溢清理")
     parser.add_argument("--spill-cleanup", dest="spill_cleanup", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+    parser.add_argument("--force", action="store_true", help="覆盖现有输出；仅在明确授权后使用")
     return parser
 
 

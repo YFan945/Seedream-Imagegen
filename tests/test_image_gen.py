@@ -4,6 +4,7 @@ import argparse
 import base64
 from contextlib import redirect_stderr
 from io import BytesIO, StringIO
+import importlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,20 @@ register_heif_opener()
 
 
 class ImageGenTests(unittest.TestCase):
+    def setUp(self):
+        config_directory = TemporaryDirectory()
+        self.addCleanup(config_directory.cleanup)
+        env_patch = mock.patch.object(
+            image_gen, "ENV_FILE", Path(config_directory.name) / ".env"
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        network_patch = mock.patch(
+            "urllib.request.urlopen", side_effect=AssertionError("测试禁止真实网络访问")
+        )
+        network_patch.start()
+        self.addCleanup(network_patch.stop)
+
     def make_args(self, **overrides):
         values = {
             "command": "generate",
@@ -35,6 +50,8 @@ class ImageGenTests(unittest.TestCase):
             "response_format": "url",
             "watermark": False,
             "model": "lite",
+            "allow_model_fallback": False,
+            "project_dir": None,
             "sequential": "disabled",
             "max_images": None,
             "out_dir": None,
@@ -42,6 +59,7 @@ class ImageGenTests(unittest.TestCase):
             "stream": False,
             "out": None,
             "force": False,
+            "private_filenames": False,
             "timeout": 30,
             "dry_run": True,
         }
@@ -88,7 +106,7 @@ class ImageGenTests(unittest.TestCase):
             with self.subTest(size=size), self.assertRaises(SystemExit):
                 image_gen.validate_args(self.make_args(model=model, size=size))
 
-    def test_model_resolution_and_unknown_fallback(self):
+    def test_model_resolution_rejects_unknown_without_explicit_fallback(self):
         pro_values = ("pro", image_gen.PRO_MODEL)
         lite_values = (
             "lite", image_gen.LITE_MODEL, image_gen.LITE_MODEL_ALIAS, None, "",
@@ -99,9 +117,13 @@ class ImageGenTests(unittest.TestCase):
         for value in lite_values:
             profile, _ = image_gen.resolve_model(value)
             self.assertEqual("lite", profile.tier)
+        with self.assertRaises(SystemExit):
+            image_gen.resolve_model("some-future-model")
         stderr = StringIO()
         with redirect_stderr(stderr):
-            profile, requested = image_gen.resolve_model("some-future-model")
+            profile, requested = image_gen.resolve_model(
+                "some-future-model", allow_fallback=True
+            )
         self.assertEqual("lite", profile.tier)
         self.assertEqual("some-future-model", requested)
         self.assertIn("回退", stderr.getvalue())
@@ -184,6 +206,28 @@ class ImageGenTests(unittest.TestCase):
                 (root / "蓝色杯子-v2.png").touch()
                 self.assertEqual(root / "蓝色杯子-v3.png", image_gen.output_path(args))
 
+    def test_private_default_output_name_does_not_contain_prompt(self):
+        args = self.make_args(prompt="高度敏感的项目代号", private_filenames=True)
+        image_gen.validate_args(args)
+        path = image_gen.output_path(args)
+        self.assertNotIn("高度敏感", path.name)
+        self.assertRegex(path.name, r"^seedream-[0-9a-f]{16}\.png$")
+
+    def test_request_body_budget_includes_prompt_and_non_image_fields(self):
+        args = self.make_args(prompt="x" * 100)
+        image_gen.validate_args(args)
+        with mock.patch.object(image_gen, "MAX_REQUEST_BODY_BYTES", 50):
+            with self.assertRaises(SystemExit):
+                image_gen.build_payload(args)
+
+    def test_request_fingerprint_is_order_independent_without_canonical_json_copy(self):
+        left = {"prompt": "x", "nested": {"b": 2, "a": 1}}
+        right = {"nested": {"a": 1, "b": 2}, "prompt": "x"}
+        self.assertEqual(
+            image_gen._request_fingerprint(left),
+            image_gen._request_fingerprint(right),
+        )
+
     def test_prompt_file_is_loaded_before_default_output_planning(self):
         parser = argparse.ArgumentParser()
         image_gen.add_common_args(parser)
@@ -209,15 +253,15 @@ class ImageGenTests(unittest.TestCase):
                 image_gen.validate_args(args)
                 self.assertIs(expected, image_gen.build_payload(args)["watermark"])
 
-    def test_dry_run_reports_default_and_fallback_models(self):
-        for requested, expected_requested in (("lite", "lite"), ("unknown", "unknown")):
+    def test_dry_run_reports_default_and_explicit_fallback_models(self):
+        for requested, allow_fallback in (("lite", False), ("unknown", True)):
             stdout = StringIO()
             stderr = StringIO()
-            args = self.make_args(model=requested)
+            args = self.make_args(model=requested, allow_model_fallback=allow_fallback)
             with redirect_stderr(stderr), mock.patch("sys.stdout", stdout):
                 image_gen.run(args)
             result = json.loads(stdout.getvalue())
-            self.assertEqual(expected_requested, result["requested_model"])
+            self.assertEqual(requested, result["requested_model"])
             self.assertEqual("lite", result["resolved_model"])
             self.assertEqual(image_gen.LITE_MODEL, result["payload"]["model"])
             self.assertNotEqual(requested, result["payload"]["model"])
@@ -226,14 +270,38 @@ class ImageGenTests(unittest.TestCase):
             if configured_base_url:
                 self.assertNotIn(configured_base_url, stdout.getvalue())
 
+    def test_prompt_file_and_cleanup_do_not_enable_dry_run_implicitly(self):
+        parser = argparse.ArgumentParser()
+        image_gen.add_common_args(parser)
+        args = parser.parse_args(
+            [
+                "--prompt-file",
+                ".seedream-prompt-abc123.txt",
+                "--size",
+                "2K",
+                "--no-watermark",
+                "--out",
+                "result.png",
+                "--cleanup-prompt-file",
+            ]
+        )
+        self.assertFalse(args.dry_run)
+
     def test_skill_documents_model_question_contract(self):
         skill = (image_gen.SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("用户只明确选择 Lite 或 Pro 时直接使用", skill)
-        self.assertIn("用户未提到模型", skill)
+        self.assertIn("用户只明确选择 Lite 或 Pro，且没有与联网或模型能力冲突时直接使用", skill)
+        self.assertIn("需要联网且未指定模型", skill)
+        self.assertIn("Lite 联网", skill)
+        self.assertIn("Pro 生图能力", skill)
         self.assertIn("AskUserQuestion", skill)
         self.assertIn("不静默切换模型", skill)
+        self.assertIn("`--web-search` 本身不要求 dry-run", skill)
+        self.assertIn("具体近期日期", skill)
+        self.assertIn(".seedream-prompt-<random-id>.txt", skill)
+        self.assertIn("HTTP 400、内容审核、敏感内容", skill)
+        self.assertIn("内容审核明确拒绝后改写 prompt", skill)
 
-    def test_skill_local_env_overrides_process_without_modifying_file(self):
+    def test_skill_local_env_overrides_process_without_mutating_environment_or_file(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text(
@@ -251,12 +319,14 @@ class ImageGenTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                sources = image_gen.load_env(env_path)
-                self.assertEqual("local-key", os.environ["ARK_API_KEY"])
-                self.assertEqual("https://local.example/api/v3", os.environ["ARK_BASE_URL"])
+                config = image_gen.load_config(env_path)
+                self.assertEqual("local-key", config.api_key)
+                self.assertEqual("https://local.example/api/v3", config.base_url)
+                self.assertEqual("process-key", os.environ["ARK_API_KEY"])
+                self.assertEqual("https://process.example/api/v3", os.environ["ARK_BASE_URL"])
                 self.assertEqual("process-value", os.environ["IGNORED"])
-                self.assertEqual("skill-local .env", sources["ARK_API_KEY"])
-                self.assertEqual("skill-local .env", sources["ARK_BASE_URL"])
+                self.assertEqual("skill-local .env", config.sources["ARK_API_KEY"])
+                self.assertEqual("skill-local .env", config.sources["ARK_BASE_URL"])
             self.assertEqual(before, env_path.read_bytes())
             self.assertEqual(before_mtime, env_path.stat().st_mtime_ns)
 
@@ -269,10 +339,26 @@ class ImageGenTests(unittest.TestCase):
                 {"ARK_API_KEY": "process-key", "ARK_BASE_URL": "https://process.example/api/v3"},
                 clear=False,
             ):
-                sources = image_gen.load_env(env_path)
-                self.assertEqual("local-key", os.environ["ARK_API_KEY"])
-                self.assertEqual("https://process.example/api/v3", os.environ["ARK_BASE_URL"])
-                self.assertEqual("process environment", sources["ARK_BASE_URL"])
+                config = image_gen.load_config(env_path)
+                self.assertEqual("local-key", config.api_key)
+                self.assertEqual("process-key", os.environ["ARK_API_KEY"])
+                self.assertEqual("https://process.example/api/v3", config.base_url)
+                self.assertEqual("process environment", config.sources["ARK_BASE_URL"])
+
+    def test_module_reload_does_not_read_env_or_mutate_environment(self):
+        before = {key: os.environ.get(key) for key in image_gen.ENV_KEYS}
+        with mock.patch.object(Path, "read_text", side_effect=AssertionError("unexpected read")):
+            importlib.reload(image_gen)
+        self.assertEqual(before, {key: os.environ.get(key) for key in image_gen.ENV_KEYS})
+
+    def test_placeholder_api_key_is_rejected_before_request(self):
+        config = image_gen.ArkConfig(
+            api_key="Your api key",
+            base_url=image_gen.DEFAULT_BASE_URL,
+            sources={"ARK_API_KEY": "skill-local .env", "ARK_BASE_URL": "default"},
+        )
+        with self.assertRaises(SystemExit):
+            image_gen._require_api_key(config)
 
     def test_base_url_and_numeric_validation(self):
         valid = (
@@ -396,6 +482,43 @@ class ImageGenTests(unittest.TestCase):
         self.assertNotIn("token=secret", raw)
         self.assertNotIn("AAAA", raw)
         self.assertEqual("<remote image URL>", preview["image"][0])
+
+    def test_dry_run_preserves_single_image_payload_shape(self):
+        preview = image_gen.preview_payload(
+            {"image": "data:image/png;base64,AAAA"}
+        )
+        self.assertIsInstance(preview["image"], str)
+
+    def test_recursive_dry_run_scrubber_removes_known_secrets_and_sensitive_fields(self):
+        secret = "fake-secret-key"
+        preview = image_gen.preview_payload(
+            {
+                "prompt": f"keep text but hide {secret}",
+                "tools": [{"token": "nested-token", "url": "https://example.com/x?sig=1"}],
+            },
+            secrets=(secret,),
+        )
+        raw = json.dumps(preview)
+        self.assertNotIn(secret, raw)
+        self.assertNotIn("nested-token", raw)
+        self.assertNotIn("sig=1", raw)
+        self.assertIn("keep text", raw)
+
+    def test_aggregate_input_limit_precedes_base64_encoding(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = []
+            for index in range(2):
+                path = root / f"input-{index}.png"
+                path.write_bytes(self.image_bytes("PNG", size=(32, 32)))
+                paths.append(str(path))
+            args = self.make_args(image=paths)
+            image_gen.validate_args(args)
+            total = sum(Path(path).stat().st_size for path in paths)
+            with mock.patch.object(image_gen, "MAX_TOTAL_INPUT_BYTES", total - 1):
+                with mock.patch("base64.b64encode") as encode, self.assertRaises(SystemExit):
+                    image_gen.build_payload(args)
+            encode.assert_not_called()
 
     def test_all_supported_local_image_formats(self):
         formats = {
@@ -614,6 +737,19 @@ class ImageGenTests(unittest.TestCase):
                 self.single_plan(path),
             )
 
+    def test_generated_named_tier_mismatch_is_rejected(self):
+        content = self.image_bytes("PNG", size=(1920, 1920))
+        args = self.make_args(size="4K", output_format="png")
+        image_gen.validate_args(args)
+        with self.assertRaises(SystemExit):
+            image_gen._validate_generated_image(content, args)
+
+    def test_generated_named_2k_tier_accepts_1920_square(self):
+        content = self.image_bytes("PNG", size=(1920, 1920))
+        args = self.make_args(size="2K", output_format="png")
+        image_gen.validate_args(args)
+        image_gen._validate_generated_image(content, args)
+
     def test_sse_decoder_handles_frames_done_and_invalid_json(self):
         lines = [
             b': keepalive\n',
@@ -768,6 +904,40 @@ class ImageGenTests(unittest.TestCase):
         self.assertIn("request_id=req-1", message)
         self.assertFalse(raised.exception.ambiguous)
 
+    def test_http_submission_outcome_uses_conservative_allowlist(self):
+        cases = (
+            (400, "BadRequest", False),
+            (400, "InvalidParameter", False),
+            (400, "UnknownArkCode", True),
+            (408, "RequestTimeout", True),
+            (429, "RateLimitExceeded", True),
+            (500, "InternalServiceError", True),
+            (503, "ServiceUnavailable", True),
+        )
+        for status, ark_code, expected_ambiguous in cases:
+            with self.subTest(status=status, ark_code=ark_code):
+                body = json.dumps(
+                    {"error": {"code": ark_code, "message": "test failure"}}
+                ).encode("utf-8")
+                error = __import__("urllib.error").error.HTTPError(
+                    "https://ark.example/api", status, "failed", {}, BytesIO(body)
+                )
+                with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
+                    with mock.patch("urllib.request.urlopen", side_effect=error):
+                        with self.assertRaises(image_gen.ArkRequestError) as raised:
+                            image_gen.api_request({"prompt": "x"}, 1)
+                self.assertEqual(expected_ambiguous, raised.exception.ambiguous)
+
+    def test_unknown_http_error_without_ark_code_is_ambiguous(self):
+        error = __import__("urllib.error").error.HTTPError(
+            "https://ark.example/api", 418, "failed", {}, BytesIO(b"unknown")
+        )
+        with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
+            with mock.patch("urllib.request.urlopen", side_effect=error):
+                with self.assertRaises(image_gen.ArkRequestError) as raised:
+                    image_gen.api_request({"prompt": "x"}, 1)
+        self.assertTrue(raised.exception.ambiguous)
+
     def test_api_response_uses_separate_aggregate_limit(self):
         class Response(BytesIO):
             def __enter__(self):
@@ -826,7 +996,7 @@ class ImageGenTests(unittest.TestCase):
     def test_successful_request_cleans_explicitly_owned_prompt_file(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            prompt_file = root / "prompt.txt"
+            prompt_file = root / ".seedream-prompt-abc123.txt"
             prompt_file.write_text("临时 prompt", encoding="utf-8")
             output = root / "result.png"
             content = self.image_bytes("PNG")
@@ -840,17 +1010,59 @@ class ImageGenTests(unittest.TestCase):
                 out=str(output),
                 dry_run=False,
                 response_format="b64_json",
+                project_dir=str(root),
             )
             with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
                 with mock.patch.object(image_gen, "api_request", return_value=result):
                     image_gen.run(args)
             self.assertTrue(output.is_file())
             self.assertFalse(prompt_file.exists())
+            self.assertFalse((root / "tmp" / "seedream").exists())
+            self.assertFalse((root / "tmp").exists())
 
-    def test_ambiguous_request_keeps_owned_prompt_file(self):
+    def test_successful_prompt_cleanup_preserves_nonempty_temp_directories(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            prompt_file = root / "prompt.txt"
+            prompt_file = root / "tmp" / "seedream" / "nested" / "prompt.txt"
+            prompt_file.parent.mkdir(parents=True)
+            prompt_file.write_text("临时 prompt", encoding="utf-8")
+            sibling = root / "tmp" / "seedream" / "keep.txt"
+            sibling.write_text("保留", encoding="utf-8")
+            unrelated = root / "tmp" / "user-data.txt"
+            unrelated.write_text("保留", encoding="utf-8")
+            output = root / "result.png"
+            result = {
+                "data": [
+                    {
+                        "b64_json": base64.b64encode(
+                            self.image_bytes("PNG")
+                        ).decode("ascii")
+                    }
+                ]
+            }
+            args = self.make_args(
+                prompt=None,
+                prompt_file=str(prompt_file),
+                cleanup_prompt_file=True,
+                out=str(output),
+                dry_run=False,
+                response_format="b64_json",
+                project_dir=str(root),
+            )
+            with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
+                with mock.patch.object(image_gen, "api_request", return_value=result):
+                    image_gen.run(args)
+            self.assertFalse(prompt_file.exists())
+            self.assertFalse(prompt_file.parent.exists())
+            self.assertTrue(sibling.is_file())
+            self.assertTrue(unrelated.is_file())
+            self.assertTrue((root / "tmp" / "seedream").is_dir())
+            self.assertTrue((root / "tmp").is_dir())
+
+    def test_ambiguous_request_cleans_prompt_but_keeps_state_file(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt_file = root / ".seedream-prompt-abc123.txt"
             prompt_file.write_text("临时 prompt", encoding="utf-8")
             args = self.make_args(
                 prompt=None,
@@ -858,6 +1070,7 @@ class ImageGenTests(unittest.TestCase):
                 cleanup_prompt_file=True,
                 out=str(root / "result.png"),
                 dry_run=False,
+                project_dir=str(root),
             )
             with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
                 with mock.patch.object(
@@ -865,7 +1078,97 @@ class ImageGenTests(unittest.TestCase):
                 ):
                     with self.assertRaises(SystemExit):
                         image_gen.run(args)
+            self.assertFalse(prompt_file.exists())
+            state_path = image_gen._request_state_path(root / "result.png")
+            self.assertTrue(state_path.is_file())
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("ambiguous", state["status"])
+
+    def test_dry_run_keeps_owned_root_prompt_for_real_request(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt_file = root / ".seedream-prompt-abc123.txt"
+            prompt_file.write_text("临时 prompt", encoding="utf-8")
+            args = self.make_args(
+                prompt=None,
+                prompt_file=str(prompt_file),
+                cleanup_prompt_file=True,
+                out=str(root / "result.png"),
+                dry_run=True,
+                project_dir=str(root),
+            )
+            with mock.patch("sys.stdout", StringIO()):
+                image_gen.run(args)
+            self.assertTrue(prompt_file.is_file())
+
+    def test_cleanup_prompt_file_outside_owned_root_is_rejected_before_request(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt_file = root / "user-prompt.txt"
+            prompt_file.write_text("用户文件", encoding="utf-8")
+            args = self.make_args(
+                prompt=None,
+                prompt_file=str(prompt_file),
+                cleanup_prompt_file=True,
+                project_dir=str(root),
+            )
+            with mock.patch.object(image_gen, "api_request") as request:
+                with self.assertRaises(SystemExit):
+                    image_gen.run(args)
+            request.assert_not_called()
             self.assertTrue(prompt_file.exists())
+
+    def test_cleanup_prompt_file_symlink_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt_file = root / "tmp" / "seedream" / "prompt.txt"
+            prompt_file.parent.mkdir(parents=True)
+            prompt_file.write_text("临时", encoding="utf-8")
+            args = self.make_args(
+                prompt=None,
+                prompt_file=str(prompt_file),
+                cleanup_prompt_file=True,
+                project_dir=str(root),
+            )
+            with mock.patch.object(Path, "is_symlink", return_value=True):
+                with self.assertRaises(SystemExit):
+                    image_gen.validate_args(args)
+
+    def test_windows_reserved_output_name_is_rejected_on_all_platforms(self):
+        with TemporaryDirectory() as directory:
+            args = self.make_args(out=str(Path(directory) / "CON.png"))
+            image_gen.validate_args(args)
+            with self.assertRaises(SystemExit):
+                image_gen.build_output_plan(args)
+
+    def test_atomic_write_no_clobber_preserves_concurrent_output(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "output.png"
+            output.write_bytes(b"existing")
+            with self.assertRaises(SystemExit):
+                image_gen._atomic_write(output, b"replacement", force=False)
+            self.assertEqual(b"existing", output.read_bytes())
+
+    def test_atomic_write_interrupt_cleans_temporary_file(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output.png"
+            with mock.patch.object(image_gen.os, "link", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    image_gen._atomic_write(output, b"data", force=False)
+            self.assertFalse(output.exists())
+            self.assertEqual([], list(root.glob(".output.png.*.tmp")))
+
+    def test_request_state_interrupt_cleans_temporary_file_and_preserves_old_state(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = root / ".state.json"
+            state_path.write_text('{"status":"old"}', encoding="utf-8")
+            with mock.patch.object(image_gen.os, "replace", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    image_gen._write_request_state(state_path, {"status": "new"})
+            self.assertEqual('{"status":"old"}', state_path.read_text(encoding="utf-8"))
+            self.assertEqual([], list(root.glob("..state.json.*.tmp")))
 
     def test_request_state_contains_hash_but_no_payload_or_key(self):
         with TemporaryDirectory() as directory:
@@ -878,6 +1181,22 @@ class ImageGenTests(unittest.TestCase):
             self.assertNotIn("private prompt", raw)
             self.assertNotIn("AAAA", raw)
             self.assertNotIn("ARK_API_KEY", raw)
+
+    def test_ambiguous_state_reason_redacts_injected_skill_local_key(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "result.png"
+            state_path = image_gen._request_state_path(path)
+            state = {"status": "pending"}
+            secret = "skill-local-secret"
+            image_gen._mark_request_ambiguous(
+                state_path,
+                state,
+                f"failed with {secret} https://example.com/x?token=1",
+                api_key=secret,
+            )
+            raw = state_path.read_text(encoding="utf-8")
+            self.assertNotIn(secret, raw)
+            self.assertNotIn("token=1", raw)
 
     def test_ambiguous_failure_persists_and_blocks_retry(self):
         with TemporaryDirectory() as directory:
@@ -909,6 +1228,23 @@ class ImageGenTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         image_gen.run(args)
             self.assertFalse(image_gen._request_state_path(path).exists())
+
+    def test_http_503_keeps_ambiguous_request_state(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "result.png"
+            args = self.make_args(out=str(path), dry_run=False)
+            body = b'{"error":{"code":"ServiceUnavailable","message":"later"}}'
+            error = __import__("urllib.error").error.HTTPError(
+                "https://ark.example/api", 503, "failed", {}, BytesIO(body)
+            )
+            with mock.patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False):
+                with mock.patch("urllib.request.urlopen", side_effect=error):
+                    with self.assertRaises(SystemExit):
+                        image_gen.run(args)
+            state_path = image_gen._request_state_path(path)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("ambiguous", state["status"])
+            self.assertIn("HTTP 503", state["reason"])
 
     def test_failure_after_api_response_is_ambiguous(self):
         with TemporaryDirectory() as directory:

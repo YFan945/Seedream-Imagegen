@@ -41,7 +41,10 @@ DEFAULT_OUTPUT_DIRECTORY = Path(".")
 DEFAULT_GROUP_OUTPUT_DIRECTORY = Path("images")
 DEFAULT_OUTPUT_STEM = "seedream"
 MAX_DEFAULT_OUTPUT_STEM_LENGTH = 64
+MAX_PORTABLE_PATH_LENGTH = 240
 MAX_INPUT_BYTES = 30_000_000
+MAX_TOTAL_INPUT_BYTES = 120_000_000
+MAX_REQUEST_BODY_BYTES = 170_000_000
 MAX_OUTPUT_BYTES = 100_000_000
 MAX_RESPONSE_BYTES = 512_000_000
 MAX_ERROR_BYTES = 64_000
@@ -52,6 +55,24 @@ MAX_INPUT_PIXELS = 36_000_000
 MIN_SEED = -(2**31)
 MAX_SEED = 2**31 - 1
 ENV_KEYS = ("ARK_API_KEY", "ARK_BASE_URL")
+API_KEY_PLACEHOLDERS = frozenset(
+    {"your api key", "your-api-key", "replace-me", "changeme", "<api-key>"}
+)
+WINDOWS_RESERVED_STEMS = frozenset(
+    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+)
+ROOT_PROMPT_NAME_PATTERN = re.compile(
+    r"^\.seedream-prompt-[A-Za-z0-9][A-Za-z0-9_-]{5,63}\.txt$"
+)
+
+# 只有能够明确证明请求在生成前被参数校验拒绝的组合，才可清理付费请求状态。
+# 扩充此白名单前必须补充 Ark 官方语义依据和状态文件测试。
+REJECTED_HTTP_ARK_CODES = frozenset(
+    {
+        (400, "BadRequest"),
+        (400, "InvalidParameter"),
+    }
+)
 
 SUPPORTED_INPUT_SUBTYPES = {"jpeg", "png", "webp", "bmp", "tiff", "gif", "heic", "heif"}
 PIL_FORMAT_TO_SUBTYPE = {
@@ -116,6 +137,13 @@ MODEL_PROFILES = {
     ),
 }
 
+NAMED_TIER_PIXEL_RANGES = {
+    "1K": (921_600, 1_638_400),
+    "2K": (3_686_400, 4_624_220),
+    "3K": (8_294_400, 10_485_760),
+    "4K": (14_745_600, 16_777_216),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OutputPlan:
@@ -123,6 +151,13 @@ class OutputPlan:
     display_path: Path
     targets: tuple[Path, ...]
     state_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ArkConfig:
+    api_key: str
+    base_url: str
+    sources: dict[str, str]
 
 
 class ArkRequestError(RuntimeError):
@@ -133,38 +168,52 @@ class ArkRequestError(RuntimeError):
         self.ambiguous = ambiguous
 
 
-def load_env(path: Path | None = None) -> dict[str, str]:
-    """Load known values from the skill-local .env, overriding this process only."""
+def load_config(
+    path: Path | None = None, *, environ: dict[str, str] | None = None
+) -> ArkConfig:
+    """Read Ark configuration without mutating the process environment."""
     env_path = path or ENV_FILE
+    process_env = os.environ if environ is None else environ
+    values = {key: process_env.get(key, "").strip() for key in ENV_KEYS}
     sources = {
-        key: "process environment" if os.getenv(key) else "unset"
+        key: "process environment" if values[key] else "unset"
         for key in ENV_KEYS
     }
-    if not env_path.exists():
-        sources["ARK_BASE_URL"] = (
-            sources["ARK_BASE_URL"] if sources["ARK_BASE_URL"] != "unset" else "default"
-        )
-        return sources
-    try:
-        lines = env_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as exc:
-        raise RuntimeError(f"无法读取 skill-local .env：{env_path}（{exc}）") from None
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("\"'")
-        if key in ENV_KEYS and value:
-            os.environ[key] = value
-            sources[key] = "skill-local .env"
+    if env_path.exists():
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError(f"无法读取 skill-local .env：{env_path}（{exc}）") from None
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key in ENV_KEYS and value:
+                values[key] = value
+                sources[key] = "skill-local .env"
     if sources["ARK_BASE_URL"] == "unset":
         sources["ARK_BASE_URL"] = "default"
-    return sources
+    return ArkConfig(
+        api_key=values["ARK_API_KEY"],
+        base_url=_normalize_base_url(values["ARK_BASE_URL"] or DEFAULT_BASE_URL),
+        sources=sources,
+    )
 
 
-CONFIG_SOURCES = load_env()
+def _process_config() -> ArkConfig:
+    """Build a no-disk configuration snapshot for helpers and injected tests."""
+    values = {key: os.getenv(key, "").strip() for key in ENV_KEYS}
+    return ArkConfig(
+        api_key=values["ARK_API_KEY"],
+        base_url=_normalize_base_url(values["ARK_BASE_URL"] or DEFAULT_BASE_URL),
+        sources={
+            "ARK_API_KEY": "process environment" if values["ARK_API_KEY"] else "unset",
+            "ARK_BASE_URL": "process environment" if values["ARK_BASE_URL"] else "default",
+        },
+    )
 
 
 def die(message: str, code: int = 1) -> None:
@@ -196,13 +245,17 @@ def _load_image_dependencies(subtype: str | None = None):
     return _load_pillow()
 
 
-def resolve_model(value: str | None) -> tuple[ModelProfile, str]:
+def resolve_model(
+    value: str | None, *, allow_fallback: bool = False
+) -> tuple[ModelProfile, str]:
     requested = (value or DEFAULT_MODEL).strip()
     normalized = requested.lower()
     if normalized in {"pro", PRO_MODEL.lower()}:
         return MODEL_PROFILES["pro"], requested
     known_lite = {"", "lite", LITE_MODEL.lower(), LITE_MODEL_ALIAS.lower()}
     if normalized not in known_lite:
+        if not allow_fallback:
+            die(f"未识别模型 {requested!r}；请明确使用 lite 或 pro。")
         print(
             f"Warning: 未识别模型 {requested!r}，按规则回退到 Seedream 5.0 Lite。",
             file=sys.stderr,
@@ -333,6 +386,46 @@ def image_to_api_value(value: str) -> str:
     return f"data:image/{declared_subtype};base64,{encoded}"
 
 
+def _preflight_image_payload(values: list[str]) -> None:
+    raw_total = 0
+    encoded_total = 0
+    for value in values:
+        if value.startswith(("http://", "https://")):
+            encoded_total += len(value)
+            continue
+        if value.startswith("data:"):
+            encoded = value.partition(",")[2]
+            raw_total += ((len(encoded) + 3) // 4) * 3
+            encoded_total += len(value)
+            continue
+        path = Path(value)
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            die(f"无法读取输入图片属性：{path}（{exc}）")
+        raw_total += size
+        encoded_total += len("data:image/heif;base64,") + ((size + 2) // 3) * 4
+    if raw_total > MAX_TOTAL_INPUT_BYTES:
+        die(f"输入图片总大小超过 {MAX_TOTAL_INPUT_BYTES} bytes 聚合上限。")
+    if encoded_total > MAX_REQUEST_BODY_BYTES:
+        die(f"图片 payload 预计超过 {MAX_REQUEST_BODY_BYTES} bytes 请求体上限。")
+
+
+def _estimate_json_bytes(value: Any) -> int:
+    if isinstance(value, dict):
+        return 2 + sum(
+            len(str(key).encode("utf-8")) + 4 + _estimate_json_bytes(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return 2 + sum(_estimate_json_bytes(item) + 1 for item in value)
+    if isinstance(value, str):
+        if value.startswith("data:image/"):
+            return len(value) + 2
+        return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
 def _normalize_size(value: str, profile: ModelProfile | None = None) -> str:
     profile = profile or MODEL_PROFILES["pro"]
     tier_match = re.fullmatch(r"[1-4]k", value, re.IGNORECASE)
@@ -380,15 +473,15 @@ def _normalize_base_url(value: str | None = None) -> str:
     return raw
 
 
-def _config_sources() -> dict[str, str]:
-    return {
-        "ARK_API_KEY": CONFIG_SOURCES.get("ARK_API_KEY", "unset"),
-        "ARK_BASE_URL": CONFIG_SOURCES.get("ARK_BASE_URL", "default"),
-    }
+def _config_sources(config: ArkConfig) -> dict[str, str]:
+    return dict(config.sources)
 
 
-def validate_args(args: argparse.Namespace) -> None:
-    profile, requested = resolve_model(args.model)
+def validate_args(args: argparse.Namespace, config: ArkConfig | None = None) -> None:
+    config = config or _process_config()
+    profile, requested = resolve_model(
+        args.model, allow_fallback=getattr(args, "allow_model_fallback", False)
+    )
     args.model_profile = profile
     args.requested_model = requested
     if args.guidance_scale is not None:
@@ -401,7 +494,9 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.cleanup_prompt_file and not args.prompt_file:
         die("--cleanup-prompt-file 只能与 --prompt-file 一起使用。")
     args.resolved_prompt = read_prompt(args.prompt, args.prompt_file)
-    args.base_url = _normalize_base_url(os.getenv("ARK_BASE_URL"))
+    if args.cleanup_prompt_file:
+        _validate_prompt_cleanup_path(args)
+    args.base_url = config.base_url
     images = args.image or []
     if len(images) > profile.max_input_images:
         die(
@@ -445,6 +540,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "output_format": args.output_format,
     }
     if args.image:
+        _preflight_image_payload(args.image)
         images = [image_to_api_value(item) for item in args.image]
         payload["image"] = images[0] if len(images) == 1 else images
     if args.seed is not None:
@@ -459,21 +555,27 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             payload["tools"] = [{"type": "web_search"}]
         if args.stream:
             payload["stream"] = True
+    if _estimate_json_bytes(payload) > MAX_REQUEST_BODY_BYTES:
+        die(f"完整请求体预计超过 {MAX_REQUEST_BODY_BYTES} bytes 安全上限。")
     return payload
 
 
-def preview_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def preview_payload(
+    payload: dict[str, Any], *, secrets: Iterable[str] = ()
+) -> dict[str, Any]:
     preview = dict(payload)
     images = preview.get("image")
     if images:
-        values = images if isinstance(images, list) else [images]
-        preview["image"] = [
+        is_list = isinstance(images, list)
+        values = images if is_list else [images]
+        redacted = [
             f"<base64 image: {len(item)} chars>"
             if item.startswith("data:image/")
             else "<remote image URL>"
             for item in values
         ]
-    return preview
+        preview["image"] = redacted if is_list else redacted[0]
+    return _scrub_structure(preview, secrets=secrets)
 
 
 def _output_suffix(output_format: str) -> str:
@@ -490,9 +592,28 @@ def _prompt_output_stem(prompt: str) -> str:
     return safe or DEFAULT_OUTPUT_STEM
 
 
-def _next_default_output_path(prompt: str, suffix: str) -> Path:
+def _selected_output_stem(prompt: str, private: bool) -> str:
+    if private:
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        return f"{DEFAULT_OUTPUT_STEM}-{digest}"
+    return _prompt_output_stem(prompt)
+
+
+def _validate_portable_target(path: Path) -> None:
+    name = path.name
+    if not name or name.endswith((" ", ".")):
+        die(f"输出文件名不能为空或以空格/句点结尾：{path}")
+    if path.stem.upper() in WINDOWS_RESERVED_STEMS:
+        die(f"输出文件名是 Windows 保留名：{path.name}")
+    if len(name.encode("utf-8")) > 255:
+        die(f"输出文件名过长：{path.name}")
+    if len(str(path.resolve(strict=False))) > MAX_PORTABLE_PATH_LENGTH:
+        die(f"输出路径超过 {MAX_PORTABLE_PATH_LENGTH} 字符可移植上限：{path}")
+
+
+def _next_default_output_path(prompt: str, suffix: str, *, private: bool = False) -> Path:
     """Return a non-conflicting prompt-derived path in the current project."""
-    stem = _prompt_output_stem(prompt)
+    stem = _selected_output_stem(prompt, private)
     candidate = DEFAULT_OUTPUT_DIRECTORY / f"{stem}{suffix}"
     version = 2
     while candidate.exists():
@@ -501,9 +622,11 @@ def _next_default_output_path(prompt: str, suffix: str) -> Path:
     return candidate
 
 
-def _default_group_targets(prompt: str, suffix: str, count: int) -> tuple[Path, tuple[Path, ...]]:
+def _default_group_targets(
+    prompt: str, suffix: str, count: int, *, private: bool = False
+) -> tuple[Path, tuple[Path, ...]]:
     """Return a non-conflicting prompt-derived group under the project images directory."""
-    stem = _prompt_output_stem(prompt)
+    stem = _selected_output_stem(prompt, private)
     version = 1
     while True:
         group_stem = stem if version == 1 else f"{stem}-v{version}"
@@ -516,9 +639,9 @@ def _default_group_targets(prompt: str, suffix: str, count: int) -> tuple[Path, 
         version += 1
 
 
-def _default_group_state_path(prompt: str) -> Path:
+def _default_group_state_path(prompt: str, *, private: bool = False) -> Path:
     """Scope default-group recovery state to the exact prompt, not all of images/."""
-    stem = _prompt_output_stem(prompt)
+    stem = _selected_output_stem(prompt, private)
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
     return DEFAULT_GROUP_OUTPUT_DIRECTORY / f".{stem}-{prompt_hash}.seedream-request.json"
 
@@ -531,7 +654,13 @@ def _resolved_prompt(args: argparse.Namespace) -> str:
 def output_path(args: argparse.Namespace, *, check_conflicts: bool = True) -> Path:
     suffix = _output_suffix(args.output_format)
     prompt = _resolved_prompt(args)
-    path = Path(args.out) if args.out else _next_default_output_path(prompt, suffix)
+    path = (
+        Path(args.out)
+        if args.out
+        else _next_default_output_path(
+            prompt, suffix, private=getattr(args, "private_filenames", False)
+        )
+    )
     if not path.suffix:
         path = path.with_suffix(suffix)
     allowed = {".png"} if args.output_format == "png" else {".jpg", ".jpeg"}
@@ -540,6 +669,7 @@ def output_path(args: argparse.Namespace, *, check_conflicts: bool = True) -> Pa
             f"输出扩展名 {path.suffix} 与 --output-format {args.output_format} 不一致；"
             f"请使用 {', '.join(sorted(allowed))}。"
         )
+    _validate_portable_target(path)
     if path.exists() and not path.is_file():
         die(f"输出路径不是文件：{path}")
     if check_conflicts and path.exists() and not args.force:
@@ -562,13 +692,18 @@ def build_output_plan(args: argparse.Namespace, *, check_conflicts: bool = True)
             state_path = directory / ".seedream-request.json"
         else:
             prompt = _resolved_prompt(args)
-            directory, targets = _default_group_targets(prompt, suffix, args.max_images)
-            state_path = _default_group_state_path(prompt)
+            private = getattr(args, "private_filenames", False)
+            directory, targets = _default_group_targets(
+                prompt, suffix, args.max_images, private=private
+            )
+            state_path = _default_group_state_path(prompt, private=private)
         if directory.exists() and not directory.is_dir():
             die(f"组图输出路径不是目录：{directory}")
         invalid_targets = [path for path in targets if path.exists() and not path.is_file()]
         if invalid_targets:
             die(f"组图目标路径不是文件：{invalid_targets[0]}")
+        for target in targets:
+            _validate_portable_target(target)
         conflicts = [path for path in targets if path.exists()]
         if check_conflicts and conflicts and not args.force:
             die(
@@ -613,6 +748,11 @@ def _dry_run_diagnostics(plan: OutputPlan, args: argparse.Namespace) -> dict[str
     }
 
 
+SENSITIVE_FIELD_NAMES = frozenset(
+    {"authorization", "cookie", "set-cookie", "api_key", "access_token", "token", "secret"}
+)
+
+
 def _redact_message(value: str, api_key: str = "") -> str:
     if api_key:
         value = value.replace(api_key, "<redacted>")
@@ -621,7 +761,30 @@ def _redact_message(value: str, api_key: str = "") -> str:
     return value[:500]
 
 
-def _safe_http_error(exc: urllib.error.HTTPError, api_key: str) -> str:
+def _scrub_structure(
+    value: Any, *, secrets: Iterable[str] = (), field_name: str = ""
+) -> Any:
+    if field_name.casefold() in SENSITIVE_FIELD_NAMES:
+        return "<redacted>"
+    if isinstance(value, dict):
+        return {
+            key: _scrub_structure(item, secrets=secrets, field_name=str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_structure(item, secrets=secrets) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_structure(item, secrets=secrets) for item in value)
+    if isinstance(value, str):
+        scrubbed = value
+        for secret in secrets:
+            if secret:
+                scrubbed = scrubbed.replace(secret, "<redacted>")
+        return _redact_message(scrubbed)
+    return value
+
+
+def _safe_http_error(exc: urllib.error.HTTPError, api_key: str) -> tuple[str, str]:
     body = exc.read(MAX_ERROR_BYTES).decode("utf-8", errors="replace")
     code = ""
     request_id = ""
@@ -643,7 +806,14 @@ def _safe_http_error(exc: urllib.error.HTTPError, api_key: str) -> str:
     if request_id:
         details.append(f"request_id={request_id}")
     details.append(_redact_message(message, api_key))
-    return "；".join(details)
+    return "；".join(details), code
+
+
+def classify_submission_outcome(http_status: int, ark_code: str) -> str:
+    """Classify whether an HTTP response proves the billable work was rejected."""
+    if (http_status, ark_code) in REJECTED_HTTP_ARK_CODES:
+        return "rejected"
+    return "ambiguous"
 
 
 def _request_state_path(path: Path) -> Path:
@@ -651,8 +821,36 @@ def _request_state_path(path: Path) -> Path:
 
 
 def _request_fingerprint(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256()
+
+    def update(value: Any) -> None:
+        if isinstance(value, dict):
+            digest.update(b"{")
+            for key in sorted(value):
+                update(str(key))
+                update(value[key])
+            digest.update(b"}")
+        elif isinstance(value, (list, tuple)):
+            digest.update(b"[")
+            for item in value:
+                update(item)
+            digest.update(b"]")
+        elif isinstance(value, str):
+            digest.update(b"s")
+            if value.startswith("data:image/"):
+                digest.update(len(value).to_bytes(8, "big"))
+                for offset in range(0, len(value), 1_048_576):
+                    digest.update(value[offset : offset + 1_048_576].encode("ascii"))
+            else:
+                encoded = value.encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+        else:
+            digest.update(b"v")
+            digest.update(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+    update(payload)
+    return digest.hexdigest()
 
 
 def _utc_now() -> str:
@@ -694,10 +892,12 @@ def _write_request_state(state_path: Path, state: dict[str, Any], *, create: boo
             os.fsync(handle.fileno())
             temporary = Path(handle.name)
         os.replace(temporary, state_path)
+        temporary = None
     except OSError as exc:
+        die(f"无法更新请求状态文件：{state_path}（{exc}）")
+    finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-        die(f"无法更新请求状态文件：{state_path}（{exc}）")
 
 
 def _new_request_state(
@@ -715,10 +915,16 @@ def _new_request_state(
     return plan.state_path, state
 
 
-def _mark_request_ambiguous(state_path: Path, state: dict[str, Any], reason: str) -> None:
+def _mark_request_ambiguous(
+    state_path: Path,
+    state: dict[str, Any],
+    reason: str,
+    *,
+    api_key: str = "",
+) -> None:
     state["status"] = "ambiguous"
     state["updated_at"] = _utc_now()
-    state["reason"] = _redact_message(reason, os.getenv("ARK_API_KEY", "").strip())
+    state["reason"] = _redact_message(reason, api_key or os.getenv("ARK_API_KEY", "").strip())
     _write_request_state(state_path, state)
 
 
@@ -731,29 +937,113 @@ def _ensure_no_request_state(plan: OutputPlan) -> None:
 
 
 def _cleanup_prompt_file(args: argparse.Namespace) -> None:
-    """Remove an explicitly designated agent-owned prompt file after success only."""
+    """Remove an explicitly designated agent-owned prompt and empty temp dirs."""
     if not args.cleanup_prompt_file or not args.prompt_file:
         return
     try:
-        Path(args.prompt_file).unlink(missing_ok=True)
+        prompt_path = _validate_prompt_cleanup_path(args)
+    except SystemExit:
+        print("Warning: prompt 临时文件 ownership 已变化，拒绝自动删除。", file=sys.stderr)
+        return
+    try:
+        prompt_path.unlink(missing_ok=True)
     except OSError as exc:
         print(f"Warning: 已完成生成，但无法清理临时 prompt 文件：{args.prompt_file}（{exc}）", file=sys.stderr)
+        return
+
+    project_dir = _project_directory(args)
+    owned_root = (project_dir / "tmp" / "seedream").resolve(strict=False)
+    if not prompt_path.is_relative_to(owned_root):
+        return
+    current = prompt_path.parent
+    while current.is_relative_to(owned_root):
+        try:
+            current.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            break
+        if current == owned_root:
+            break
+        current = current.parent
+
+    # 只在 agent 临时根已经为空并被删除后，顺带删除空的 project/tmp；
+    # rmdir 不会删除含有其他文件或目录的用户内容。
+    if not owned_root.exists():
+        try:
+            owned_root.parent.rmdir()
+        except (FileNotFoundError, OSError):
+            pass
 
 
-def _require_api_key() -> None:
-    if not os.getenv("ARK_API_KEY", "").strip():
+def _project_directory(args: argparse.Namespace) -> Path:
+    return Path(
+        getattr(args, "project_dir", None)
+        or os.getenv("CLAUDE_PROJECT_DIR", "")
+        or Path.cwd()
+    ).resolve(strict=False)
+
+
+def _validate_prompt_cleanup_path(args: argparse.Namespace) -> Path:
+    path = Path(args.prompt_file)
+    project_dir = _project_directory(args)
+    owned_root = (project_dir / "tmp" / "seedream").resolve(strict=False)
+    resolved = path.resolve(strict=False)
+    lexical = path.absolute()
+    unsafe_link = False
+    for candidate in (lexical, *lexical.parents):
+        if candidate.is_symlink() or (
+            hasattr(candidate, "is_junction") and candidate.is_junction()
+        ):
+            unsafe_link = True
+            break
+        if candidate == project_dir:
+            break
+    if unsafe_link or not path.is_file():
+        die("--cleanup-prompt-file 只允许删除现存的普通非 symlink 文件。")
+    root_owned = (
+        resolved.parent == project_dir
+        and ROOT_PROMPT_NAME_PATTERN.fullmatch(resolved.name) is not None
+    )
+    legacy_owned = resolved.is_relative_to(owned_root)
+    if not root_owned and not legacy_owned:
+        die(
+            "--cleanup-prompt-file 仅允许项目根目录下名为 "
+            ".seedream-prompt-<random-id>.txt 的 agent 临时文件；"
+            f"旧版目录 {owned_root} 仅保留兼容。"
+        )
+    conflicts = [getattr(args, "out", None), *(getattr(args, "image", None) or [])]
+    for conflict in conflicts:
+        if conflict and not str(conflict).startswith(("http://", "https://", "data:")):
+            if Path(conflict).resolve(strict=False) == resolved:
+                die("prompt 临时文件不得与输入图片或输出路径相同。")
+    return resolved
+
+
+def _ensure_prompt_cleanup_not_plan_conflict(
+    args: argparse.Namespace, plan: OutputPlan
+) -> None:
+    if not args.cleanup_prompt_file:
+        return
+    prompt_path = Path(args.prompt_file).resolve(strict=False)
+    protected = (*plan.targets, plan.state_path)
+    if any(path.resolve(strict=False) == prompt_path for path in protected):
+        die("prompt 临时文件不得与输出目标或请求状态文件相同。")
+
+
+def _require_api_key(config: ArkConfig) -> None:
+    if not config.api_key or config.api_key.casefold() in API_KEY_PLACEHOLDERS:
         die(f"ARK_API_KEY 为空。请填写 {ENV_FILE} 或设置环境变量。")
 
 
 def _api_request_object(
-    payload: dict[str, Any], api_key: str, *, stream: bool
+    payload: dict[str, Any], config: ArkConfig, *, stream: bool
 ) -> urllib.request.Request:
-    base_url = _normalize_base_url(os.getenv("ARK_BASE_URL"))
     return urllib.request.Request(
-        f"{base_url}/images/generations",
+        f"{config.base_url}/images/generations",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream" if stream else "application/json",
         },
@@ -763,20 +1053,23 @@ def _api_request_object(
 
 @contextmanager
 def _api_response(
-    payload: dict[str, Any], timeout: int, *, stream: bool
+    payload: dict[str, Any], timeout: int, *, stream: bool, config: ArkConfig | None = None
 ) -> Iterator[Any]:
-    api_key = os.getenv("ARK_API_KEY", "").strip()
+    config = config or _process_config()
+    api_key = config.api_key
     if not api_key:
         raise ArkRequestError(
             f"ARK_API_KEY 为空。请填写 {ENV_FILE} 或设置环境变量。", ambiguous=False
         )
-    request = _api_request_object(payload, api_key, stream=stream)
+    request = _api_request_object(payload, config, stream=stream)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             yield response
     except urllib.error.HTTPError as exc:
+        details, ark_code = _safe_http_error(exc, api_key)
+        outcome = classify_submission_outcome(exc.code, ark_code)
         raise ArkRequestError(
-            f"Ark API 请求失败：{_safe_http_error(exc, api_key)}", ambiguous=False
+            f"Ark API 请求失败：{details}", ambiguous=outcome != "rejected"
         ) from None
     except urllib.error.URLError as exc:
         raise ArkRequestError(
@@ -791,9 +1084,11 @@ def _api_response(
         ) from None
 
 
-def api_request(payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+def api_request(
+    payload: dict[str, Any], timeout: int, config: ArkConfig | None = None
+) -> dict[str, Any]:
     try:
-        with _api_response(payload, timeout, stream=False) as response:
+        with _api_response(payload, timeout, stream=False, config=config) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ArkRequestError("Ark API 响应超过安全上限。", ambiguous=True)
@@ -853,8 +1148,10 @@ def _decode_sse_events(lines: Iterable[bytes]) -> Iterator[dict[str, Any]]:
         yield event
 
 
-def api_stream(payload: dict[str, Any], timeout: int) -> Iterator[dict[str, Any]]:
-    with _api_response(payload, timeout, stream=True) as response:
+def api_stream(
+    payload: dict[str, Any], timeout: int, config: ArkConfig | None = None
+) -> Iterator[dict[str, Any]]:
+    with _api_response(payload, timeout, stream=True, config=config) as response:
         yield from _decode_sse_events(response)
 
 
@@ -927,10 +1224,11 @@ def _validate_generated_image(content: bytes, args: argparse.Namespace) -> None:
     else:
         pixels = width * height
         ratio = width / height
-        if not profile.min_output_pixels <= pixels <= profile.max_output_pixels:
+        minimum, maximum = NAMED_TIER_PIXEL_RANGES[args.size.upper()]
+        if not minimum <= pixels <= maximum:
             die(
-                f"生成结果尺寸超出 Seedream 5.0 {profile.tier.title()} 范围："
-                f"{width}x{height}={pixels}"
+                f"生成结果尺寸不符合 {args.size.upper()} 档位："
+                f"{width}x{height}={pixels}，期望 {minimum} 到 {maximum} pixels"
             )
         if not MIN_ASPECT_RATIO <= ratio <= MAX_ASPECT_RATIO:
             die(f"生成结果宽高比超出 [1/16, 16]：{width}x{height}")
@@ -947,14 +1245,18 @@ def _atomic_write(path: Path, content: bytes, *, force: bool) -> None:
             handle.flush()
             os.fsync(handle.fileno())
             temporary = Path(handle.name)
-        if path.exists() and not force:
-            temporary.unlink(missing_ok=True)
-            die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
-        os.replace(temporary, path)
+        if force:
+            os.replace(temporary, path)
+            temporary = None
+        else:
+            os.link(temporary, path)
+    except FileExistsError:
+        die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
     except OSError as exc:
+        die(f"无法保存生成图片：{path}（{exc}）")
+    finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-        die(f"无法保存生成图片：{path}（{exc}）")
 
 
 def _item_bytes(item: dict[str, Any], args: argparse.Namespace) -> bytes:
@@ -1065,9 +1367,11 @@ def save_stream_response(
     return saved
 
 
-def run(args: argparse.Namespace) -> None:
-    validate_args(args)
+def _run(args: argparse.Namespace) -> None:
+    config = load_config()
+    validate_args(args, config)
     plan = build_output_plan(args, check_conflicts=not args.dry_run)
+    _ensure_prompt_cleanup_not_plan_conflict(args, plan)
     payload = build_payload(args)
     if args.dry_run:
         print(
@@ -1078,9 +1382,9 @@ def run(args: argparse.Namespace) -> None:
                     "resolved_model": args.model_profile.tier,
                     "output": str(plan.display_path),
                     "planned_outputs": [str(path) for path in plan.targets],
-                    "config_sources": _config_sources(),
+                    "config_sources": _config_sources(config),
                     "preflight": _dry_run_diagnostics(plan, args),
-                    "payload": preview_payload(payload),
+                    "payload": preview_payload(payload, secrets=(config.api_key,)),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1089,13 +1393,15 @@ def run(args: argparse.Namespace) -> None:
         return
     _ensure_no_request_state(plan)
     prepare_output_destination(plan)
-    _require_api_key()
+    _require_api_key(config)
     state_path, state = _new_request_state(plan, payload)
     started = time.monotonic()
     previous_handlers: dict[int, Any] = {}
 
     def handle_termination(signum, _frame) -> None:
-        _mark_request_ambiguous(state_path, state, f"进程收到终止信号 {signum}")
+        _mark_request_ambiguous(
+            state_path, state, f"进程收到终止信号 {signum}", api_key=config.api_key
+        )
         raise SystemExit(128 + signum)
 
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -1107,28 +1413,34 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         if args.stream:
-            save_stream_response(api_stream(payload, args.timeout), args, plan)
+            save_stream_response(api_stream(payload, args.timeout, config), args, plan)
         else:
-            save_response(api_request(payload, args.timeout), args, plan)
+            save_response(api_request(payload, args.timeout, config), args, plan)
     except ArkRequestError as exc:
         if exc.ambiguous:
-            _mark_request_ambiguous(state_path, state, str(exc))
+            _mark_request_ambiguous(state_path, state, str(exc), api_key=config.api_key)
         else:
             state_path.unlink(missing_ok=True)
         die(str(exc))
     except KeyboardInterrupt:
-        _mark_request_ambiguous(state_path, state, "用户中断请求")
+        _mark_request_ambiguous(state_path, state, "用户中断请求", api_key=config.api_key)
         die("请求已被中断，结果和计费状态未知；不得自动重试。", 130)
     except SystemExit:
         if state_path.exists() and state.get("status") != "ambiguous":
-            _mark_request_ambiguous(state_path, state, "请求提交后的处理失败")
+            _mark_request_ambiguous(
+                state_path, state, "请求提交后的处理失败", api_key=config.api_key
+            )
         raise
     except BaseException as exc:
-        _mark_request_ambiguous(state_path, state, f"未处理异常：{type(exc).__name__}")
+        _mark_request_ambiguous(
+            state_path,
+            state,
+            f"未处理异常：{type(exc).__name__}",
+            api_key=config.api_key,
+        )
         raise
     else:
         state_path.unlink(missing_ok=True)
-        _cleanup_prompt_file(args)
     finally:
         for signum, previous in previous_handlers.items():
             try:
@@ -1138,6 +1450,16 @@ def run(args: argparse.Namespace) -> None:
     print(f"完成，用时 {time.monotonic() - started:.1f}s", file=sys.stderr)
 
 
+def run(args: argparse.Namespace) -> None:
+    try:
+        _run(args)
+    finally:
+        # dry-run 常作为真实请求前的同形预检，需要保留 prompt 供后续调用；
+        # 真实生成尝试一旦结束，无论成功或失败都清理显式标记的 agent prompt。
+        if not getattr(args, "dry_run", False):
+            _cleanup_prompt_file(args)
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     prompt = parser.add_mutually_exclusive_group(required=True)
     prompt.add_argument("--prompt")
@@ -1145,13 +1467,19 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cleanup-prompt-file",
         action="store_true",
-        help="仅在成功完成后删除由调用方创建的 --prompt-file；不会在失败或状态未知时删除。",
+        help="真实生成尝试结束后删除 agent 创建的 --prompt-file；dry-run 保留。",
     )
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help="pro 或 lite；默认 lite；未知值回退 lite，不会作为 Model ID 发送",
+        help="pro 或 lite；默认 lite；未知值默认拒绝",
     )
+    parser.add_argument(
+        "--allow-model-fallback",
+        action="store_true",
+        help="显式允许未知模型兼容回退 Lite；真实请求前必须审查 warning",
+    )
+    parser.add_argument("--project-dir", help=argparse.SUPPRESS)
     parser.add_argument("--image", action="append", help="本地路径、HTTP(S) URL 或 data URI")
     parser.add_argument("--size", default=DEFAULT_SIZE, help="模型支持的分辨率档位或 WIDTHxHEIGHT")
     parser.add_argument("--seed", type=int)
@@ -1171,7 +1499,17 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out", help="单图输出文件")
     parser.add_argument("--out-dir", help="组图输出目录")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument(
+        "--private-filenames",
+        action="store_true",
+        help="默认输出名仅使用 seedream + prompt hash，不暴露 prompt 摘要",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="单次网络操作/socket timeout（秒），不是整次生成总 deadline",
+    )
     parser.add_argument("--dry-run", action="store_true")
 
 

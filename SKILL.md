@@ -1,20 +1,23 @@
 ---
 name: imagegen
-description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑位图。适用于文生图、参考图生图、单图编辑、多图融合、Lite 组图/3K/4K/联网及时效图，以及 Pro 坐标点、圈选、涂鸦或草图交互编辑。用户未明确选择 Lite 或 Pro 时使用 Claude Code AskUserQuestion 询问；不要用于 SVG/矢量图或适合用 HTML/CSS 确定性完成的视觉。
+description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑位图。适用于文生图、参考图生图、单图编辑、多图融合、Lite 组图/3K/4K/联网及时效图，以及 Pro 坐标点、圈选、涂鸦或草图交互编辑。需要联网且未指定模型时直接使用 Lite；联网与 Pro 冲突时使用 Claude Code AskUserQuestion 询问；不要用于 SVG/矢量图或适合用 HTML/CSS 确定性完成的视觉。
 ---
 
 # Seedream 5.0 Pro / Lite
 
-使用 `scripts/image_gen.py` 生成或编辑位图；默认从本 skill 根目录 `.env` 读取 Ark 配置。本 skill 只有 `generate` 和 `edit` 两类任务：按用户意图选择，不要用参考图是否存在来代替判断。所有真实请求经该统一 CLI 发往 `POST <ARK_BASE_URL>/images/generations`；不得创建临时 SDK/HTTP 脚本或修改 CLI。
+使用 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 生成或编辑位图；默认从本 skill 根目录 `.env` 读取 Ark 配置。本 skill 只有 `generate` 和 `edit` 两类任务：按用户意图选择，不要用参考图是否存在来代替判断。所有真实请求经该统一 CLI 发往 `POST <ARK_BASE_URL>/images/generations`；不得创建临时 SDK/HTTP 脚本或修改 CLI。
 
 ## 模型选择（保持此询问方式）
 
-先检查用户是否已明确选择模型，不要按任务能力自动替用户选择：
+先判断是否需要模型原生联网，再检查用户是否已明确选择模型：
 
-- 用户只明确选择 Lite 或 Pro 时直接使用，不调用 `AskUserQuestion`。
-- 用户未提到模型，或同时提到 Lite 和 Pro 但未明确选择时，调用 `AskUserQuestion`。
+- 用户只明确选择 Lite 或 Pro，且没有与联网或模型能力冲突时直接使用，不调用 `AskUserQuestion`。
+- 用户或其 prompt 明确要求联网、搜索、检索最新/实时信息，或任务明显依赖时效事实时，视为需要联网。带有具体近期日期的“世界局势、时局、新闻、天气、行情、赛程、现任人物或近期产品状态”等请求必须按联网需求处理，不能因为用户只写了 Pro 就判断为“不涉及联网”。任务没有明确要求但模型搜索能实质提高时效事实准确性时，也可按需要开启。
+- 需要联网且未指定模型时直接选择 Lite 并传 `--web-search`，不调用 `AskUserQuestion`。
+- 同时明确要求 Pro（或 Pro 专属能力）与联网时，调用 `AskUserQuestion`，只让用户二选一：`Lite 联网`，或 `Pro 生图能力（不使用模型原生联网）`。选择前不得提交请求；`AskUserQuestion` 不可用时停止并直接向用户请求选择，不得默认其一。
+- 不需要联网时，用户未提到模型，或同时提到 Lite 和 Pro 但未明确选择，调用 `AskUserQuestion`。
 - 只有准确选择 `Seedream 5.0 Pro` 才传 `--model pro`。
-- Lite、取消、空答案、Other、自定义值或 `AskUserQuestion` 不可用时传 `--model lite`。
+- 在不涉及能力冲突的普通模型询问中，Lite、取消、空答案、Other、自定义值或 `AskUserQuestion` 不可用时传 `--model lite`。
 - 用户选择的模型与所需能力冲突时本地报错并解释冲突，不静默切换模型、降级规格或改写任务。
 
 | 能力 | Lite | Pro |
@@ -45,7 +48,7 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 - 单资产默认单图、非流式；Lite 组图仅用于明确要求一组连续图片。
 - 不要把不同资产塞进同一组图请求；每项不同内容分别生成。
-- 联网、stream 与组图仅可在 Lite 中使用。Pro 的最新事实必须先由外部检索核实，再将事实写入 prompt，不能声称 Pro 原生联网。
+- `web_search`、stream 与组图仅可在 Lite 中使用。只要用户/prompt 明确要求联网就启用 `--web-search`；未明确要求时，仅在任务依赖最新事实且模型搜索有实际价值时按需启用。Pro 的最新事实必须先由外部检索核实，再将事实写入 prompt，不能声称 Pro 原生联网。
 
 每张输入图均按 CLI `--image` 顺序标明角色：`编辑目标`、`内容来源`、`风格参考` 或 `交互标记图`；称为「图一、图二……」，不依赖文件名猜测角色。
 
@@ -55,16 +58,16 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 2. 判断 `generate`/`edit`、单图/组图、预览/项目交付；收集 prompt、逐字文字、输入图角色、必须保持项、禁止项及输出位置。
 3. 将请求整理为短而清晰的生产规格。用户 prompt 已具体时只结构化；较泛时仅补充有助于结果的构图、用途或材质细节。
 4. 需要时读取 `references/prompting.md`，并按其分类、结构和验收规则编写 prompt；模板仅作为按需参考，见 `references/sample-prompts.md`。
-5. 多行或含引号 prompt 写入当前项目 `tmp/seedream/` 下的 UTF-8 临时文件并使用 `--prompt-file --cleanup-prompt-file`，避免 shell 转义损坏逐字文本。只清理由 agent 创建的临时文件；不得删除用户提供的 prompt 文件或输入图。
-6. 组图、stream、web_search、多参考图、自定义尺寸、未知模型 fallback、已有输出或覆盖风险，先执行 `--dry-run`；它只输出脱敏 payload、配置来源和预检结果，不提交或计费。参数细节见 `references/cli.md`。
-7. 未传 `--out` 时，单图默认非破坏保存至运行 Claude Code 的当前项目根目录；用清理后的 prompt 作为文件名，冲突时自动追加 `-v2`、`-v3`。组图未传 `--out-dir` 时保存至当前项目 `images/`，以 `<提示词>-01.png`、`-02.png` 命名。显式输出路径或组图计划目标不得覆盖；仅用户明确允许时使用 `--force`，且它不会清理目录内其他文件。
-8. 真实请求前确认规格、参数和输出路径与模型能力相容。生图会计费：首次请求按用户任务执行；任何质量迭代、重生成或变体在发起下一次付费请求前取得授权。
+5. 多行或含引号 prompt 直接写入项目根目录 `${CLAUDE_PROJECT_DIR}/.seedream-prompt-<random-id>.txt`，使用不含 prompt 内容的随机 ASCII ID，并传 `--prompt-file --cleanup-prompt-file`，避免 shell 转义损坏逐字文本且不创建 `tmp/seedream`。每次改写 prompt 使用新的临时文件。只标记清理由 agent 创建且符合该命名的文件；不得删除用户提供的 prompt 文件或输入图。
+6. `--dry-run` 不是默认步骤。仅在组图、stream、多参考图、自定义尺寸、显式 `--allow-model-fallback`、已有输出或覆盖风险时先执行；`--prompt-file`、`--cleanup-prompt-file`、普通 2K 单图和 `--web-search` 本身不要求 dry-run。它只输出脱敏 payload、配置来源和预检结果，不提交或计费。参数细节见 `references/cli.md`。
+7. 始终根据 `${CLAUDE_PROJECT_DIR}` 传入绝对 `--out` 或 `--out-dir`：单图默认非破坏保存至项目根目录，组图默认保存至项目 `images/`。默认名冲突时追加 `-v2`、`-v3`；显式目标不得覆盖，仅用户明确允许时使用 `--force`。
+8. 真实请求前确认规格、参数和输出路径与模型能力相容。生图会计费：首次请求按用户任务执行；第一次真实 POST 后的任何再次 POST——包括内容审核明确拒绝后改写 prompt、质量迭代、重生成或变体——都在发起前取得用户授权。`pending`/`ambiguous` 还必须先核实状态，不能仅凭用户同意绕过状态锁。
 9. 生成后实际查看每张图片，检查真实尺寸、格式、主体、构图、文字、参考一致性、编辑不变项和禁止项；不要用 prompt 复述代替验收。
 10. 需要迭代时一次只改一个主要问题，重复关键不变项；报告最终模型、完整 prompt 与绝对输出路径。
 
 ## 中间产物清理
 
-仅在请求成功、最终图片已验证并保存后清理：agent 创建的 `tmp/seedream/` prompt 文件、色键处理的源图以及空的临时目录。不得删除最终交付图片、用户提供的输入文件、显式指定的输出目录内容，或 `pending`/`ambiguous` 状态文件。后者可能表示已计费但结果未知，必须保留用于核对。
+真实生成调用只要结束，无论成功、明确拒绝、本地失败、超时或 `ambiguous`，CLI 都清理本次显式标记的项目根目录 `.seedream-prompt-<random-id>.txt`；dry-run 为了供后续真实请求复用而保留。每次生成或改写使用独立文件，因此失败版本也不会遗留。旧版 `${CLAUDE_PROJECT_DIR}/tmp/seedream/` 路径只保留 CLI 清理兼容，agent 不再新建。色键源图只有在它是 agent 明确创建且仍有其他可恢复原件的工作副本时才能清理。不得删除生成原图、最终交付图片、用户输入、显式输出目录内容或任何 `pending`/`ambiguous` 状态文件。
 
 默认：2K、PNG、无水印、单图、非流式、不开联网。重要文字必须逐字核对；不合格时优先建议确定性后期排版。
 
@@ -102,19 +105,17 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 
 ## 透明背景
 
-模型不能稳定直接输出透明 alpha。简单、不含键色的实心主体可使用色键；复杂抠图不得承诺成功。
+模型不能稳定直接输出透明 alpha。简单、不含键色色相族的实心主体可使用色键；完整模板只保存在 `references/sample-prompts.md`，参数、格式、停止条件与三项交付检查见 `references/chroma-key.md`。
 
-1. 在 prompt 中要求完全均匀的 `#00ff00` 背景；绿色主体改用 `#ff00ff`，禁止阴影、渐变、纹理、反射、地面和背景光照变化。
-2. 生成后运行 `python scripts\remove_chroma_key.py --input <source> --out <final.png> --auto-key border --soft-matte --despill`。
-3. 检查 alpha、边缘色溢、孔洞和主体颜色；确有白边时才小幅使用 `--edge-contract` 或 `--edge-feather`。
-4. 毛发、玻璃、烟雾、液体、反光、软阴影或半透明材质，改用专业分割工具。
+生成后显式传入实际键色；背景通过 auto-key 四角共识时才允许自动取色。毛发、玻璃、烟雾、液体、反光、软阴影、半透明或主体包含候选键色色相族时，停止简单色键方案并说明限制。
 
 ## 安全与配置
 
-- skill-local `.env` 只覆盖当前 Python 进程的 `ARK_API_KEY` 和 `ARK_BASE_URL`；不得修改 Windows 环境或 `.env` 文件。
+- skill-local `.env` 只覆盖本次 CLI 使用的配置对象，不修改 `os.environ`、Windows 环境或 `.env` 文件。
 - 不要求用户在对话中提供 `ARK_API_KEY`，也不得打印密钥、Base64 输入图、签名 URL 或未经脱敏的 API 响应。
 - 生图 POST 可能计费且不自动重试；超时、中断或断连后，先检查输出与对应的 `.seedream-request.json` 状态文件。默认组图状态按提示词隔离，避免不同组图互相阻塞。
-- `--dry-run` 不提交请求，可报告输出冲突和未知请求状态；真实请求出现 `pending` 或 `ambiguous` 状态必须停止。
+- `--dry-run` 仅在命令显式包含该参数时生效，不提交请求，可报告输出冲突和未知请求状态；CLI 不会根据 prompt、输出路径或 `--web-search` 隐式开启。真实请求出现 `pending` 或 `ambiguous` 状态必须停止。
+- 状态文件是唯一重试依据。即使 stderr 提到 HTTP 400、内容审核、敏感内容或 agent 主观判断“未生成/不会计费”，只要状态文件为 `pending` 或 `ambiguous`，就不得删除状态、改写 prompt 后重试或自行宣称不计费；必须停止并请用户核实。只有 CLI 自己按明确拒绝 allowlist 删除状态后，才可继续当前流程。
 - `--force` 仅在用户明确授权覆盖时使用。
 
 ## 按需参考
@@ -122,5 +123,6 @@ description: 使用火山方舟 Doubao Seedream 5.0 Lite 或 Pro 生成、编辑
 - `references/prompting.md`：提示词结构、分类、文字、参考图、编辑、透明背景与验收。
 - `references/sample-prompts.md`：可复制的生成、编辑、标记、组图和联网模板。
 - `references/cli.md`：CLI、端点、配置、输入/输出、dry-run 与失败恢复。
+- `references/chroma-key.md`：色键 CLI、alpha、格式、失败恢复和轻量交付检查。
 - `references/lite.md`：Lite 能力、API payload、尺寸、组图、联网与 SSE。
 - `references/pro.md`：Pro 能力、API payload、尺寸、输入与响应限制。

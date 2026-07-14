@@ -9,7 +9,7 @@
 - 仅单图输出；最多 10 张参考图。
 - 支持 1K、2K 或合法自定义尺寸；不支持 3K/4K。
 - 不支持组图、`stream` 或模型原生 `web_search`。
-- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
+- API 端点为 `POST <ARK_BASE_URL>/images/generations`；请求和响应由 `${CLAUDE_SKILL_DIR}/scripts/image_gen.py` 处理，不要自行拼装第二套客户端。
 
 ## 输出尺寸
 
@@ -30,7 +30,7 @@
 
 ## Payload 约束
 
-通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。`image` 为按顺序传入的图片数组；prompt 必须标明图一、图二的角色及编辑不变项。
+通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须标明图一、图二的角色及编辑不变项。
 
 默认 `output_format` 为 PNG；`response_format` 为 `url` 或 `b64_json`。不得出现 `sequential_image_generation`、`sequential_image_generation_options`、`stream` 或 `tools`。最新事实由 Claude 外部检索后写入 prompt，不得声称 Pro 原生联网。
 
@@ -42,4 +42,4 @@
 - 响应必须恰好一张图；`response_format` 支持 `url`/`b64_json`，`output_format` 支持 png/jpeg，默认 PNG。
 - URL 仅保留 24 小时，应立即保存并验证真实格式、尺寸与输出数量。超时、中断、响应或保存不确定时保留请求状态，停止而非自动重试。
 
-官方依据：[Seedream 4.0-5.0 教程](https://docs.volcengine.com/docs/82379/1824121?lang=zh)与[图片生成 API](https://api.volcengine.com/api-docs/view?action=ImageGenerations&serviceCode=ark&version=2024-01-01)，复核日期 2026-07-14。
+官方依据：[Seedream 4.0-5.0 教程](https://docs.volcengine.com/docs/82379/1824121?lang=zh)与[图片生成 API](https://api.volcengine.com/api-docs/view?action=ImageGenerations&serviceCode=ark&version=2024-01-01)，复核日期 2026-07-14。Pro Model ID、10 张输入、精确尺寸和交互能力边界在当前公开页面中缺少可直接逐项定位的静态正文，属于可追溯性缺口；修改这些高风险常量前必须重新核对官方控制台/API 说明。
