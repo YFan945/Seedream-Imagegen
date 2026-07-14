@@ -15,7 +15,7 @@ from unittest import mock
 from PIL import Image
 from pillow_heif import register_heif_opener
 
-from scripts import image_gen
+from skills.imagegen.scripts import image_gen
 
 
 register_heif_opener()

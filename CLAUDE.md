@@ -1,16 +1,16 @@
 # Repository Guidelines
 
-本仓库是面向 Claude Code 的 `imagegen` skill，所有回答与文档默认使用中文；技术术语、命令和代码标识符保持原文。改动应小而聚焦，涉及流程或参数时同步更新 `SKILL.md` 与 `references/`。
+本仓库是面向 Claude Code 的 `imagegen` skill，所有回答与文档默认使用中文；技术术语、命令和代码标识符保持原文。skill 的可分发内容位于 `skills/imagegen/`；改动流程或参数时同步更新其中的 `SKILL.md` 与 `references/`。
 
 ## 项目结构与模块
 
-- `scripts/image_gen.py`：Doubao Seedream 5.0 Lite/Pro 的受校验 CLI；不要以临时 SDK 脚本替代它。
-- `scripts/remove_chroma_key.py`：将均匀色键背景转换为透明 alpha。
+- `skills/imagegen/scripts/image_gen.py`：Doubao Seedream 5.0 Lite/Pro 的受校验 CLI；不要以临时 SDK 脚本替代它。
+- `skills/imagegen/scripts/remove_chroma_key.py`：将均匀色键背景转换为透明 alpha。
 - `tests/`：`pytest` 单元测试，分别覆盖 CLI 与色键处理。
-- `references/`：模型能力、CLI、提示词、模板和视觉示例说明；修改流程或参数时同步更新对应文件。
-- `assets/examples/`：按需使用的典型视觉参考，不是默认模型输入；新增或调整图片时同步更新 `references/visual-examples.md`。
-- `logo/`：README 横幅和方形 skill 图标，仅用于项目品牌展示。
-- `requirements.txt`：唯一依赖入口，包含运行与测试依赖。
+- `skills/imagegen/references/`：模型能力、CLI、提示词、模板和视觉示例说明；修改流程或参数时同步更新对应文件。
+- `skills/imagegen/assets/examples/`：按需使用的典型视觉参考，不是默认模型输入；新增或调整图片时同步更新 `references/visual-examples.md`。
+- `skills/imagegen/logo/`：README 横幅和方形 skill 图标，仅用于项目品牌展示。
+- `skills/imagegen/requirements.txt`：唯一依赖入口，包含运行与测试依赖。
 - `pyproject.toml`：项目元数据和 `pytest` 配置，不声明第二套安装依赖。
 - 单图默认放在当前项目根目录，以清理后的 prompt 命名；组图默认放在 `images/`；不得提交 `.env`、缓存或请求状态文件。
 - `README.md`：GitHub 英文入口，包含安装、配置和使用条件。
@@ -21,7 +21,7 @@
 安装全部依赖（运行与测试）：
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -r skills/imagegen/requirements.txt
 ```
 
 运行完整测试：
@@ -33,7 +33,7 @@ python -m pytest -q
 调试 CLI 时优先使用不计费的预检：
 
 ```powershell
-python scripts\image_gen.py generate --model lite --prompt "测试" --out output\test.png --dry-run
+python skills\imagegen\scripts\image_gen.py generate --model lite --prompt "测试" --out output\test.png --dry-run
 ```
 
 真实请求前确认 `ARK_API_KEY` 已在 skill-local `.env` 或进程环境中配置；不得输出或提交密钥。agent 创建的 prompt 临时文件统一使用项目根目录 `.seedream-prompt-<random-id>.txt`，其中 `<random-id>` 为 6–64 位 ASCII 字母、数字、`_` 或 `-`，并配合 `--cleanup-prompt-file`。不得删除用户输入或不确定请求状态文件。
@@ -61,4 +61,4 @@ python scripts\image_gen.py generate --model lite --prompt "测试" --out output
 
 ## Agent 专项规则
 
-遵循 `SKILL.md`：不得擅自替换用户选择的 Lite/Pro；任何可能计费的迭代请求须先取得授权；遇到 `pending` 或 `ambiguous` 请求状态必须停止，不能自动重试。
+遵循 `skills/imagegen/SKILL.md`：不得擅自替换用户选择的 Lite/Pro；任何可能计费的迭代请求须先取得授权；遇到 `pending` 或 `ambiguous` 请求状态必须停止，不能自动重试。

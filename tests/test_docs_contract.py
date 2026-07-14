@@ -16,10 +16,11 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SKILL_ROOT = ROOT / "skills" / "imagegen"
 
 
 def test_skill_frontmatter_is_valid_yaml():
-    content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert content.startswith("---\n")
     frontmatter = content.split("---", 2)[1]
     parsed = yaml.safe_load(frontmatter)
@@ -28,7 +29,11 @@ def test_skill_frontmatter_is_valid_yaml():
 
 
 def test_relative_markdown_links_and_assets_exist():
-    markdown_files = list(ROOT.glob("*.md")) + list((ROOT / "references").glob("*.md"))
+    markdown_files = [
+        *ROOT.glob("*.md"),
+        SKILL_ROOT / "SKILL.md",
+        *(SKILL_ROOT / "references").glob("*.md"),
+    ]
     link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
     html_asset_pattern = re.compile(r"<(?:img|a)\b[^>]*(?:src|href)=\"([^\"]+)\"")
     missing: list[str] = []
@@ -46,8 +51,8 @@ def test_relative_markdown_links_and_assets_exist():
 
 
 def test_visual_examples_are_documented_and_valid_images():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    reference = (ROOT / "references" / "visual-examples.md").read_text(
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    reference = (SKILL_ROOT / "references" / "visual-examples.md").read_text(
         encoding="utf-8"
     )
     expected = [
@@ -58,7 +63,7 @@ def test_visual_examples_are_documented_and_valid_images():
     ]
     assert "references/visual-examples.md" in skill
     for filename in expected:
-        path = ROOT / "assets" / "examples" / filename
+        path = SKILL_ROOT / "assets" / "examples" / filename
         assert f"../assets/examples/{filename}" in reference
         assert path.stat().st_size > 0
         with Image.open(path) as opened:
@@ -72,14 +77,14 @@ def test_brand_assets_live_outside_visual_examples():
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README-zh.md").read_text(encoding="utf-8")
     for filename in ("seedream-imagegen-logo.png", "seedream-imagegen-icon.png"):
-        assert (ROOT / "logo" / filename).is_file()
-        assert not (ROOT / "assets" / filename).exists()
+        assert (SKILL_ROOT / "logo" / filename).is_file()
+        assert not (SKILL_ROOT / "assets" / filename).exists()
     for readme in (english, chinese):
         assert "logo/seedream-imagegen-logo.png" in readme
 
 
 def test_runtime_docs_never_use_bare_repository_script_paths():
-    runtime_docs = [ROOT / "SKILL.md", *(ROOT / "references").glob("*.md")]
+    runtime_docs = [SKILL_ROOT / "SKILL.md", *(SKILL_ROOT / "references").glob("*.md")]
     pattern = re.compile(r"python\s+(?:scripts|<SKILL_DIR>)[\\/]")
     offenders = [
         str(path.relative_to(ROOT))
@@ -90,14 +95,14 @@ def test_runtime_docs_never_use_bare_repository_script_paths():
 
 
 def test_claude_path_substitutions_are_scoped_to_rendered_skill():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert '$skillDir = "${CLAUDE_SKILL_DIR}"' in skill
     assert '$projectDir = "${CLAUDE_PROJECT_DIR}"' in skill
 
     raw_docs = [
         ROOT / "README.md",
         ROOT / "README-zh.md",
-        *(ROOT / "references").glob("*.md"),
+        *(SKILL_ROOT / "references").glob("*.md"),
     ]
     forbidden = (
         "${CLAUDE_SKILL_DIR}",
@@ -117,8 +122,8 @@ def test_claude_path_substitutions_are_scoped_to_rendered_skill():
 
 
 def test_powershell_reference_commands_use_initialized_local_paths():
-    cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
-    chroma = (ROOT / "references" / "chroma-key.md").read_text(encoding="utf-8")
+    cli = (SKILL_ROOT / "references" / "cli.md").read_text(encoding="utf-8")
+    chroma = (SKILL_ROOT / "references" / "chroma-key.md").read_text(encoding="utf-8")
     assert cli.count('python "$skillDir\\scripts\\image_gen.py"') == 4
     assert 'python "$skillDir\\scripts\\remove_chroma_key.py"' in chroma
     for text in (cli, chroma):
@@ -127,7 +132,7 @@ def test_powershell_reference_commands_use_initialized_local_paths():
 
 
 def test_skill_chooses_shell_without_scanning_unspecified_inputs():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "原生 Windows" in skill
     assert "macOS、Linux 和 WSL" in skill
     assert "不" in skill and "shell 选择" in skill
@@ -139,8 +144,8 @@ def test_skill_chooses_shell_without_scanning_unspecified_inputs():
 
 
 def test_prompt_language_follows_user_language_without_extra_deliberation():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    prompting = (ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    prompting = (SKILL_ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
     assert "references/prompting.md" in skill
     assert "用户主要输入文本的语言" in prompting
     assert "全局语言习惯" in prompting
@@ -149,7 +154,7 @@ def test_prompt_language_follows_user_language_without_extra_deliberation():
 
 
 def test_skill_links_every_runtime_reference_directly():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     expected = {
         "lite.md",
         "pro.md",
@@ -164,8 +169,8 @@ def test_skill_links_every_runtime_reference_directly():
 
 
 def test_prompt_templates_preserve_common_structure_and_scenarios():
-    prompting = (ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
-    samples = (ROOT / "references" / "sample-prompts.md").read_text(
+    prompting = (SKILL_ROOT / "references" / "prompting.md").read_text(encoding="utf-8")
+    samples = (SKILL_ROOT / "references" / "sample-prompts.md").read_text(
         encoding="utf-8"
     )
     assert "## 通用结构" in samples
@@ -221,8 +226,8 @@ def test_prompt_templates_preserve_common_structure_and_scenarios():
 
 
 def test_prompt_temp_workflow_uses_project_root_and_preserves_ambiguous_state():
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    cli = (ROOT / "references" / "cli.md").read_text(encoding="utf-8")
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    cli = (SKILL_ROOT / "references" / "cli.md").read_text(encoding="utf-8")
     for text in (skill, cli):
         assert ".seedream-prompt-<random-id>.txt" in text
         assert "HTTP 400" in text
@@ -259,14 +264,14 @@ def test_ci_workflow_covers_supported_python_and_release_gates():
     assert matrix["os"] == ["ubuntu-latest", "windows-latest", "macos-latest"]
     assert matrix["python-version"] == ["3.10", "3.11", "3.12", "3.13"]
     assert "python -m pytest -q" in text
-    assert "python -m compileall -q scripts tests" in text
+    assert "python -m compileall -q skills/imagegen/scripts tests" in text
     assert "git diff --check" in text
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.10"' in pyproject
 
 
 def test_dependencies_have_one_documented_installation_entry_point():
-    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    requirements = (SKILL_ROOT / "requirements.txt").read_text(encoding="utf-8")
     assert not (ROOT / "requirements-dev.txt").exists()
     for dependency in ("Pillow", "pillow-heif", "PyYAML", "pytest"):
         assert dependency in requirements
@@ -282,7 +287,7 @@ def test_dependencies_have_one_documented_installation_entry_point():
 
 
 def test_readme_logo_is_cropped_and_reasonably_compressed():
-    path = ROOT / "logo" / "seedream-imagegen-logo.png"
+    path = SKILL_ROOT / "logo" / "seedream-imagegen-logo.png"
     assert path.stat().st_size < 500_000
     with Image.open(path) as opened:
         image = opened.convert("RGB")
@@ -304,7 +309,7 @@ def test_external_cwd_and_space_paths_support_dry_run_without_real_env():
         project = root / "project with spaces"
         (skill / "scripts").mkdir(parents=True)
         project.mkdir()
-        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+        shutil.copy2(SKILL_ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
         output = project / "output" / "result.png"
         completed = subprocess.run(
             [
@@ -339,7 +344,7 @@ def test_powershell_local_path_initialization_supports_space_paths():
         project = root / "project with spaces"
         (skill / "scripts").mkdir(parents=True)
         project.mkdir()
-        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+        shutil.copy2(SKILL_ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
 
         def quoted(value: Path | str) -> str:
             return "'" + str(value).replace("'", "''") + "'"
@@ -380,7 +385,7 @@ def test_bash_local_path_initialization_supports_space_paths():
         project = root / "project with spaces"
         (skill / "scripts").mkdir(parents=True)
         project.mkdir()
-        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+        shutil.copy2(SKILL_ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
         command = "; ".join(
             [
                 f"skill_dir={shlex.quote(str(skill))}",
@@ -417,7 +422,7 @@ def test_external_prompt_file_command_without_flag_is_not_implicit_dry_run():
         (skill / "scripts").mkdir(parents=True)
         project.mkdir(parents=True)
         prompt.write_text("普通 2K 单图", encoding="utf-8")
-        shutil.copy2(ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
+        shutil.copy2(SKILL_ROOT / "scripts" / "image_gen.py", skill / "scripts" / "image_gen.py")
         output = project / "result.png"
         environment = os.environ.copy()
         environment.pop("ARK_API_KEY", None)

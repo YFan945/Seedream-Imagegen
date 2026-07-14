@@ -9,7 +9,7 @@ from unittest import mock
 
 from PIL import Image
 
-from scripts import remove_chroma_key
+from skills.imagegen.scripts import remove_chroma_key
 
 
 class RemoveChromaKeyTests(unittest.TestCase):

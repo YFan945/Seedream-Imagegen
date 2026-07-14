@@ -1,7 +1,7 @@
 # Seedream Imagegen
 
 <p align="center">
-  <img src="logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
+  <img src="skills/imagegen/logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
 [![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)
@@ -25,11 +25,11 @@ A Claude Code skill for generating and editing raster images with Doubao Seedrea
 
 ## Documentation
 
-- [Skill workflow](SKILL.md): model selection, generation flow, billing safeguards, and delivery rules.
-- [Prompt guidance](references/prompting.md) and [scenario templates](references/sample-prompts.md): structured prompts selected by the agent; users do not need to fill in a form.
-- [Visual examples](references/visual-examples.md): optional style references that are never added to requests by default.
-- [CLI reference](references/cli.md), [Lite specification](references/lite.md), and [Pro specification](references/pro.md): commands, parameters, and model boundaries.
-- [Chroma-key reference](references/chroma-key.md): validated transparency workflow and limitations.
+- [Skill workflow](skills/imagegen/SKILL.md): model selection, generation flow, billing safeguards, and delivery rules.
+- [Prompt guidance](skills/imagegen/references/prompting.md) and [scenario templates](skills/imagegen/references/sample-prompts.md): structured prompts selected by the agent; users do not need to fill in a form.
+- [Visual examples](skills/imagegen/references/visual-examples.md): optional style references that are never added to requests by default.
+- [CLI reference](skills/imagegen/references/cli.md), [Lite specification](skills/imagegen/references/lite.md), and [Pro specification](skills/imagegen/references/pro.md): commands, parameters, and model boundaries.
+- [Chroma-key reference](skills/imagegen/references/chroma-key.md): validated transparency workflow and limitations.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ A Claude Code skill for generating and editing raster images with Doubao Seedrea
 - Python 3.10+ and `pip`.
 - A Volcengine Ark API key with access to the selected Seedream model.
 - Network access to the configured Ark endpoint for real requests.
-- One dependency file: `requirements.txt` contains both runtime and test dependencies.
+- One dependency file: `skills/imagegen/requirements.txt` contains both runtime and test dependencies.
 
 ## Install
 
@@ -46,7 +46,7 @@ A Claude Code skill for generating and editing raster images with Doubao Seedrea
 Personal install, available in every project:
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen -g -a claude-code -y
+npx skills add YFan945/Seedream-Imagegen --skill imagegen -g -a claude-code --copy -y
 Test-Path "$HOME\.claude\skills\imagegen\SKILL.md"
 python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
 ```
@@ -54,7 +54,7 @@ python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
 Project install, run from the target project root:
 
 ```powershell
-npx skills add YFan945/Seedream-Imagegen -a claude-code -y
+npx skills add YFan945/Seedream-Imagegen --skill imagegen -a claude-code --copy -y
 Test-Path ".claude\skills\imagegen\SKILL.md"
 python -m pip install -r ".claude\skills\imagegen\requirements.txt"
 ```
@@ -64,12 +64,14 @@ If installer output differs, do not assume discovery succeeded: the final requir
 Manual Git install:
 
 ```powershell
-git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME\.claude\skills\imagegen"
+git clone --depth 1 https://github.com/YFan945/Seedream-Imagegen.git "$HOME\seedream-imagegen"
+Copy-Item "$HOME\seedream-imagegen\skills\imagegen" "$HOME\.claude\skills\imagegen" -Recurse
 python -m pip install -r "$HOME\.claude\skills\imagegen\requirements.txt"
 ```
 
 ```bash
-git clone https://github.com/YFan945/Seedream-Imagegen.git "$HOME/.claude/skills/imagegen"
+git clone --depth 1 https://github.com/YFan945/Seedream-Imagegen.git "$HOME/seedream-imagegen"
+cp -R "$HOME/seedream-imagegen/skills/imagegen" "$HOME/.claude/skills/imagegen"
 python -m pip install -r "$HOME/.claude/skills/imagegen/requirements.txt"
 ```
 
@@ -113,25 +115,25 @@ Claude Code resolves the skill and project roots while rendering `SKILL.md`; sup
 | Image sets / stream / web search | Supported | Not supported |
 | Visual controls | Ordinary arrows, boxes, and doodle cues | Precise coordinate/region interaction preferred |
 
-The public Ark pages do not currently expose every Model ID and limit as directly addressable static text. Treat [`references/lite.md`](references/lite.md) and [`references/pro.md`](references/pro.md) as versioned local constraints and re-check official Ark documentation before changing them.
+The public Ark pages do not currently expose every Model ID and limit as directly addressable static text. Treat [`references/lite.md`](skills/imagegen/references/lite.md) and [`references/pro.md`](skills/imagegen/references/pro.md) as versioned local constraints and re-check official Ark documentation before changing them.
 
 ## Chroma-key scope
 
-Chroma key is for flat, high-saturation backgrounds and solid subjects that do not contain the key hue family. It is not a general segmentation tool for hair, smoke, glass, liquids, veils, motion blur, soft shadows, or translucency. See [`references/chroma-key.md`](references/chroma-key.md) for the validated command, alpha contract, failure rules, and three-step delivery check.
+Chroma key is for flat, high-saturation backgrounds and solid subjects that do not contain the key hue family. It is not a general segmentation tool for hair, smoke, glass, liquids, veils, motion blur, soft shadows, or translucency. See [`references/chroma-key.md`](skills/imagegen/references/chroma-key.md) for the validated command, alpha contract, failure rules, and three-step delivery check.
 
 ## Development
 
 From the cloned repository root:
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -r skills/imagegen/requirements.txt
 python -m pytest -q
-python -m compileall -q scripts tests
+python -m compileall -q skills/imagegen/scripts tests
 python tests\benchmark_remove_chroma_key.py --max-seconds 7
 git diff --check
 ```
 
-`pyproject.toml` provides standardized project metadata and `pytest` configuration (currently the test directory and default reporting); it is not a second dependency-installation entry point. Install all dependencies only from `requirements.txt`.
+`pyproject.toml` provides standardized project metadata and `pytest` configuration (currently the test directory and default reporting); it is not a second dependency-installation entry point. Install all dependencies only from `skills/imagegen/requirements.txt`.
 
 Tests globally block real network access and never issue a billable Ark request. See [AGENTS.md](AGENTS.md) for contribution rules.
 
