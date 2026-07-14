@@ -183,6 +183,7 @@ def test_external_cwd_and_space_paths_support_dry_run_without_real_env():
             ],
             cwd=project,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             check=False,
         )
@@ -227,6 +228,7 @@ def test_external_prompt_file_command_without_flag_is_not_implicit_dry_run():
             cwd=project,
             env=environment,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             check=False,
         )

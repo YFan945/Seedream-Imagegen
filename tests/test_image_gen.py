@@ -1182,6 +1182,46 @@ class ImageGenTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     image_gen.validate_args(args)
 
+    def test_cleanup_prompt_file_stops_at_resolved_project_dir(self):
+        """Regression: system symlinks above project_dir must not break cleanup validation.
+
+        On macOS, ``/var`` is a symlink to ``/private/var``.  ``TemporaryDirectory``
+        returns a path under ``/var``, while ``_project_directory`` resolves it to
+        ``/private/var``.  The validation loop must stop at the resolved project_dir
+        instead of continuing upward and treating ``/var`` as an unsafe symlink.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt_file = root / ".seedream-prompt-abc123.txt"
+            prompt_file.write_text("临时 prompt", encoding="utf-8")
+            args = self.make_args(
+                prompt=None,
+                prompt_file=str(prompt_file),
+                cleanup_prompt_file=True,
+                project_dir=str(root),
+            )
+            # Simulate /var -> /private/var: project_dir resolves to a different
+            # path, and the parent of root looks like a symlink.
+            real_root = Path("/private") / root.relative_to(root.anchor)
+            original_resolve = Path.resolve
+            original_is_symlink = Path.is_symlink
+
+            def fake_resolve(self, strict=False):
+                absolute = self.absolute()
+                if absolute == root or absolute.is_relative_to(root):
+                    return real_root / absolute.relative_to(root)
+                return original_resolve(self, strict=strict)
+
+            def fake_is_symlink(self):
+                if self.absolute() == root.parent:
+                    return True
+                return original_is_symlink(self)
+
+            with mock.patch.object(Path, "resolve", fake_resolve):
+                with mock.patch.object(Path, "is_symlink", fake_is_symlink):
+                    resolved = image_gen._validate_prompt_cleanup_path(args)
+            self.assertEqual(resolved, real_root / prompt_file.name)
+
     def test_windows_reserved_output_name_is_rejected_on_all_platforms(self):
         with TemporaryDirectory() as directory:
             for relative in ("CON.png", "CON.extra.png", "bad:name.png", "bad./result.png"):

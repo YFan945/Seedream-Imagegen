@@ -1045,7 +1045,7 @@ def _validate_prompt_cleanup_path(args: argparse.Namespace) -> Path:
         ):
             unsafe_link = True
             break
-        if candidate == project_dir:
+        if candidate.resolve(strict=False) == project_dir:
             break
     if unsafe_link or not path.is_file():
         die("--cleanup-prompt-file 只允许删除现存的普通非 symlink 文件。")
@@ -1561,7 +1561,19 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true")
 
 
+def _configure_utf8_stdio() -> None:
+    """Ensure stdout/stderr use UTF-8 so Chinese messages print on all platforms."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except (OSError, ValueError):
+                pass
+
+
 def main() -> int:
+    _configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="使用火山方舟 Seedream 5.0 Pro/Lite 生成或编辑图片")
     subparsers = parser.add_subparsers(dest="command", required=True)
     generate = subparsers.add_parser("generate", help="文生图、参考图生图、多图融合或 Lite 组图")
