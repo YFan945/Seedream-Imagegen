@@ -77,7 +77,7 @@ def test_brand_assets_live_outside_visual_examples():
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README-zh.md").read_text(encoding="utf-8")
     for filename in ("seedream-imagegen-logo.png", "seedream-imagegen-icon.png"):
-        assert (SKILL_ROOT / "logo" / filename).is_file()
+        assert (ROOT / "logo" / filename).is_file()
         assert not (SKILL_ROOT / "assets" / filename).exists()
     for readme in (english, chinese):
         assert "logo/seedream-imagegen-logo.png" in readme
@@ -287,7 +287,7 @@ def test_dependencies_have_one_documented_installation_entry_point():
 
 
 def test_readme_logo_is_cropped_and_reasonably_compressed():
-    path = SKILL_ROOT / "logo" / "seedream-imagegen-logo.png"
+    path = ROOT / "logo" / "seedream-imagegen-logo.png"
     assert path.stat().st_size < 500_000
     with Image.open(path) as opened:
         image = opened.convert("RGB")

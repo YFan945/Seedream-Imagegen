@@ -1,5 +1,49 @@
 # CHANGELOG
 
+## v2.0.0 — 2026-07-15
+
+| 字段 | 内容 |
+| --- | --- |
+| 版本 | `v2.0.0` |
+| 时间范围 | 2026-07-14 15:57 ~ 2026-07-15 07:16 |
+| Git 范围 | `v1.2.0` → `9d70b49` |
+| 提交数 | 9 |
+| 主要贡献者 | yfan945 |
+
+## 版本概述
+
+v2.0.0 是 Seedream Imagegen 的正式可用大版本。自 v1.2.0 后，我们完成了一轮稳定性加固与项目结构重组：模型配置可移植、输出路径全组件校验、CI 跨平台扩展，随后将 skill 内容整体迁移到 `skills/imagegen/` 目录以符合 Claude Code skill 分发规范，并精简 SKILL.md 与参考文档。该版本标志着项目从快速迭代进入可安装、可维护、可对外发布的稳定状态。
+
+## 重大功能
+
+- **Skill 目录结构标准化**：将生图 CLI、参考文档、示例资产、环境模板和依赖清单从仓库根目录迁移到 `skills/imagegen/`，使项目可作为标准 Claude Code skill 被加载与分发。同步更新 `.github/workflows/ci.yml`、测试、README 与 `AGENTS.md` 中的所有路径引用。 (`skills/imagegen/`, `tests/`, `AGENTS.md`, `README.md`, `README-zh.md`)
+- **可移植模型配置**：支持通过 `ARK_PRO_MODEL`/`ARK_LITE_MODEL` 环境变量覆盖模型 ID，进程环境优先级高于本地 `.env`，且 `.env` 读取兼容 UTF-8 BOM。 (`skills/imagegen/scripts/image_gen.py`, `skills/imagegen/.env.example`)
+- **输出路径全组件校验**：`_validate_portable_target` 从仅校验文件名扩展为校验路径所有组件，覆盖空格/句点结尾、不可移植字符、Windows 保留名、组件 UTF-8 长度及总路径 240 字符上限。 (`skills/imagegen/scripts/image_gen.py`)
+
+## 重要调整
+
+- **项目精简与文档规范化**：大幅精简 `SKILL.md` 冗余说明，统一 references 中 CLI/Lite/Pro/prompting 文档，清理 `scripts/image_gen.py` 中已迁移到参考文档的实现细节；新增 `CLAUDE.md` 作为 Claude Code 专属上下文。 (`SKILL.md`, `CLAUDE.md`, `references/`, `skills/imagegen/scripts/image_gen.py`)
+- **CI 跨平台扩展**：GitHub Actions 增加 `macos-latest` 平台，修复 macOS `/var` 符号链接与 Windows UTF-8 输出问题，统一依赖安装方式。 (`.github/workflows/ci.yml`)
+- **资源目录清理**：品牌 Logo 从 `assets/` 独立到 `logo/`，视觉参考样例归入 `assets/examples/`，并新增 `references/visual-examples.md`。 (`logo/`, `assets/examples/`, `references/visual-examples.md`)
+- **测试与契约**：新增并扩展文档契约测试，验证资源存在性、README 引用、Logo 尺寸压缩与视觉示例文档一致性。 (`tests/test_docs_contract.py`)
+
+## 验证记录
+
+- `python -m pytest -q`：`135 passed, 1 skipped, 89 subtests passed`。
+- `git diff --check`：通过。
+- 未发起真实 Ark 请求；测试使用 mock 或 dry-run。
+
+## 已知问题与后续计划
+
+- 品牌资产已确认放在根目录 `logo/`，测试期望与文档引用已同步更新。
+- `pyproject.toml` 版本字段已更新为 `2.0.0`；发布前需打 tag `v2.0.0`。
+- CI 目前仅有 validate job，无自动发布流水线。
+
+## 参考来源
+
+- Git commits: `v1.2.0..9d70b49`
+- Daily changelog: [Changelog-2026-07-15.md](Changelog-2026-07-15.md)
+
 ## v1.2.1 — 2026-07-14
 
 | 字段 | 内容 |

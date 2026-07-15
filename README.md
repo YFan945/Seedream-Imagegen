@@ -1,7 +1,7 @@
 # Seedream Imagegen
 
 <p align="center">
-  <img src="skills/imagegen/logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
+  <img src="logo/seedream-imagegen-logo.png" alt="Seedream Imagegen" width="900">
 </p>
 
 [![CI](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml/badge.svg)](https://github.com/YFan945/Seedream-Imagegen/actions/workflows/ci.yml)

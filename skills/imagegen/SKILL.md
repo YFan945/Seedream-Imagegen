@@ -100,4 +100,4 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 - [视觉示例](references/visual-examples.md)：四类可选视觉参考、完整 prompt 与引用限制。只有用户需要相应方向时读取；不得默认把 `assets/examples/` 注入请求或照搬主体、场景、构图和文字。
 - [CLI 参考](references/cli.md)：配置、参数、输入输出、dry-run、保存与失败恢复。
 - [色键参考](references/chroma-key.md)：色键参数、alpha 契约、停止条件与交付检查。模型不能稳定直接输出透明 alpha；毛发、玻璃、烟雾、液体、反光、软阴影或半透明主体不适合简单色键。
-- `logo/` 仅用于项目品牌展示，不作为模型参考或生成结果。
+- 根目录 `logo/` 仅用于项目品牌展示，不作为模型参考或生成结果。
