@@ -29,7 +29,7 @@ python "$skillDir\scripts\remove_chroma_key.py" `
 - `--border-connected`：只移除与画布边框连通的键色区域，避免主体内部孤立键色孔洞。
 - `--edge-contract 0..16`：只收缩 chroma matte。
 - `--edge-feather 0..64`：只向主体内侧柔化 chroma matte，不复活 `source alpha=0`。
-- `--transparent-threshold` / `--opaque-threshold`：旧版兼容参数；新 soft matte 不再用动态距离阈值估算 alpha，不应依赖它们调结果。
+- `--transparent-threshold` / `--opaque-threshold`：旧版兼容参数；新 soft matte 不再用动态距离阈值估算 alpha，不应依赖它们调结果，仅保留 0–255 范围校验。
 
 ## I/O 与 alpha 契约
 

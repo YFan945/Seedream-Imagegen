@@ -69,8 +69,6 @@ def _validate_args(args: argparse.Namespace) -> None:
     _validate_number(args.opaque_threshold, "--opaque-threshold", 0, 255)
     _validate_number(args.edge_feather, "--edge-feather", 0, 64)
     _validate_number(args.edge_contract, "--edge-contract", 0, 16)
-    if args.soft_matte and args.transparent_threshold >= args.opaque_threshold:
-        _die("--transparent-threshold 必须小于 --opaque-threshold。")
     if getattr(args, "auto_key", "none") == "none" and (
         args.soft_matte or getattr(args, "spill_cleanup", False)
     ):
@@ -106,19 +104,6 @@ def _clamp_channel(value: float) -> int:
     return max(0, min(255, round(value)))
 
 
-def _smoothstep(value: float) -> float:
-    value = max(0.0, min(1.0, value))
-    return value * value * (3.0 - 2.0 * value)
-
-
-def _soft_alpha(distance: int, transparent: float, opaque: float) -> int:
-    if distance <= transparent:
-        return 0
-    if distance >= opaque:
-        return 255
-    return _clamp_channel(255 * _smoothstep((distance - transparent) / (opaque - transparent)))
-
-
 def _spill_channels(key: Color) -> list[int]:
     strongest = max(key)
     if strongest < 128:
@@ -134,65 +119,6 @@ def _key_dominance(rgb: Color, key: Color) -> float:
     key_strength = min(rgb[index] for index in spill)
     other_strength = max((rgb[index] for index in other), default=0)
     return float(key_strength - other_strength)
-
-
-def _single_spill_colored_alpha(rgb: Color, key: Color) -> int | None:
-    spill = _spill_channels(key)
-    other = [index for index in range(3) if index not in spill]
-    if len(spill) != 1 or len(other) < 2:
-        return None
-    other_values = [rgb[index] for index in other]
-    if max(other_values) - min(other_values) <= KEY_DOMINANCE_THRESHOLD:
-        return None
-    spill_index = spill[0]
-    key_drop = 255 * (1.0 - rgb[spill_index] / max(1.0, key[spill_index]))
-    non_key_signal = max(other_values)
-    if abs(key_drop - non_key_signal) > KEY_DOMINANCE_THRESHOLD:
-        return None
-    return _clamp_channel(max(key_drop, non_key_signal))
-
-
-def _dominance_alpha(rgb: Color, key: Color) -> int:
-    colored_alpha = _single_spill_colored_alpha(rgb, key)
-    if colored_alpha is not None:
-        return colored_alpha
-    dominance = _key_dominance(rgb, key)
-    if dominance <= 0:
-        return 255
-    key_reference = max(1.0, _key_dominance(key, key))
-    return _clamp_channel(255 * (1.0 - min(1.0, dominance / key_reference)))
-
-
-def _is_key_edge(rgb: Color, key: Color, distance: int, opaque_threshold: float) -> bool:
-    """Return true only for pixels plausibly belonging to the key-colored edge."""
-    del opaque_threshold
-    if distance <= 32 or _key_dominance(rgb, key) > 0:
-        return True
-    return _single_spill_colored_alpha(rgb, key) is not None
-
-
-def _despill(rgb: Color, key: Color) -> Color:
-    spill = _spill_channels(key)
-    if not spill:
-        return rgb
-    channels = list(rgb)
-    other = [index for index in range(3) if index not in spill]
-    cap = max((channels[index] for index in other), default=0)
-    for index in spill:
-        channels[index] = min(channels[index], cap)
-    return tuple(channels)  # type: ignore[return-value]
-
-
-def _recover_foreground(rgb: Color, key: Color, matte_alpha: int) -> Color:
-    """Undo the known key contribution for a straight-alpha edge pixel."""
-    if matte_alpha <= 0 or matte_alpha >= 255:
-        return rgb
-    alpha = matte_alpha / 255.0
-    background = 1.0 - alpha
-    return tuple(
-        _clamp_channel((channel - background * key_channel) / alpha)
-        for channel, key_channel in zip(rgb, key)
-    )  # type: ignore[return-value]
 
 
 def _retain_border_connected_matte(matte):
