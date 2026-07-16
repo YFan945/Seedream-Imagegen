@@ -77,7 +77,7 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 ## Prompt 与交付
 
 - Prompt 跟随用户主要输入文本的语言；混合或不明确时沿用对话与用户语言习惯，逐字文字保持原文。完整编写规则见 [Prompt 与验收](references/prompting.md)，需要可复制结构时看 [Prompt 模板](references/sample-prompts.md)。
-- 多行或含引号的 prompt 写入项目根目录 `.seedream-prompt-<random-id>.txt`；ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不含 prompt 摘要。传 `--prompt-file --cleanup-prompt-file`，每次改写使用新文件。
+- 多行或含引号的 prompt 写入项目根目录 `.seedream-prompt-<random-id>.txt`；ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，首字符须为字母或数字，不含 prompt 摘要。传 `--prompt-file --cleanup-prompt-file`，每次改写使用新文件。
 - 始终根据项目根目录传入绝对 `--out` 或 `--out-dir`。单图默认保存到项目根目录，Lite 组图默认保存到 `images/`；默认名冲突时追加 `-v2`、`-v3`。显式目标不得覆盖，只有用户明确允许时使用 `--force`。
 - `--dry-run` 不是默认步骤。只在组图、stream、多参考图、自定义尺寸、显式 `--allow-model-fallback`、已有输出或覆盖风险时先执行；普通 2K 单图、`--prompt-file`、`--cleanup-prompt-file` 和 `--web-search` 本身不要求 dry-run。
 - 重要文字必须逐字核对；不合格时优先建议确定性后期排版。交付前用实际观察验收，不用 prompt 复述代替检查。

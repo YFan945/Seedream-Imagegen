@@ -42,7 +42,7 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
 
 通用参数：`--image`（可重复）、`--size`、`--seed`、`--guidance-scale`、`--output-format`、`--response-format`、`--watermark`/`--no-watermark`、`--out`、`--force`、`--private-filenames`、`--timeout`、`--dry-run`。
 
-`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。
+`--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，首字符须为字母或数字，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。
 
 - 默认：Lite、2K、PNG、`url`、无水印、单图、非流式、不开联网、`--timeout 300`。timeout 是单次网络/socket operation 上限，不是整次生成总 deadline。`--watermark` 发送 JSON 布尔值 `true`，`--no-watermark` 发送 `false`。
 - `seed` 必须是 int32；`guidance_scale` 必须为有限的 `[1,10]` 数值。尺寸和功能组合由所选模型本地验证。
