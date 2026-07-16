@@ -377,6 +377,28 @@ class RemoveChromaKeyTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual([], list(root.glob(".output.png.*")))
 
+    def test_atomic_write_falls_back_to_exclusive_create_without_hardlinks(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output.png"
+            with mock.patch.object(
+                remove_chroma_key.os, "link", side_effect=OSError("no hardlinks")
+            ):
+                remove_chroma_key._atomic_write(output, b"data", force=False)
+            self.assertEqual(b"data", output.read_bytes())
+            self.assertEqual([], list(root.glob(".output.png.*")))
+
+    def test_atomic_write_fallback_still_refuses_to_clobber(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "output.png"
+            output.write_bytes(b"existing")
+            with mock.patch.object(
+                remove_chroma_key.os, "link", side_effect=OSError("no hardlinks")
+            ):
+                with self.assertRaises(SystemExit):
+                    remove_chroma_key._atomic_write(output, b"replacement", force=False)
+            self.assertEqual(b"existing", output.read_bytes())
+
     def test_heif_input_is_supported_as_static_image(self):
         from pillow_heif import from_pillow
 

@@ -1207,6 +1207,24 @@ class ImageGenTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual([], list(root.glob(".output.png.*.tmp")))
 
+    def test_atomic_write_falls_back_to_exclusive_create_without_hardlinks(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output.png"
+            with mock.patch.object(image_gen.os, "link", side_effect=OSError("no hardlinks")):
+                image_gen._atomic_write(output, b"data", force=False)
+            self.assertEqual(b"data", output.read_bytes())
+            self.assertEqual([], list(root.glob(".output.png.*.tmp")))
+
+    def test_atomic_write_fallback_still_refuses_to_clobber(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "output.png"
+            output.write_bytes(b"existing")
+            with mock.patch.object(image_gen.os, "link", side_effect=OSError("no hardlinks")):
+                with self.assertRaises(SystemExit):
+                    image_gen._atomic_write(output, b"replacement", force=False)
+            self.assertEqual(b"existing", output.read_bytes())
+
     def test_request_state_interrupt_cleans_temporary_file_and_preserves_old_state(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

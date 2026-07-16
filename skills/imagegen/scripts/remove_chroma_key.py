@@ -518,7 +518,21 @@ def _atomic_write(output: Path, data: bytes, *, force: bool) -> None:
             os.replace(temporary, output)
             temporary = None
         else:
-            os.link(temporary, output)
+            try:
+                os.link(temporary, output)
+            except FileExistsError:
+                _die(f"输出已存在，未覆盖：{output}")
+            except OSError:
+                # 不支持硬链接的文件系统（exFAT、部分网络盘）退化为排他创建。
+                try:
+                    with output.open("xb") as target:
+                        target.write(data)
+                        target.flush()
+                        os.fsync(target.fileno())
+                except FileExistsError:
+                    _die(f"输出已存在，未覆盖：{output}")
+                except OSError as error:
+                    _die(f"无法写入输出图片：{output}（{error}）")
     except FileExistsError:
         _die(f"输出已存在，未覆盖：{output}")
     except OSError as error:

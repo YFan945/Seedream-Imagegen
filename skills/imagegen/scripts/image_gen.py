@@ -1268,7 +1268,22 @@ def _atomic_write(path: Path, content: bytes, *, force: bool) -> None:
             os.replace(temporary, path)
             temporary = None
         else:
-            os.link(temporary, path)
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
+            except OSError:
+                # 不支持硬链接的文件系统（exFAT、部分网络盘）退化为排他创建；
+                # no-clobber 语义不变，崩溃原子性在这类环境无法更强。
+                try:
+                    with path.open("xb") as target:
+                        target.write(content)
+                        target.flush()
+                        os.fsync(target.fileno())
+                except FileExistsError:
+                    die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
+                except OSError as exc:
+                    die(f"无法保存生成图片：{path}（{exc}）")
     except FileExistsError:
         die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
     except OSError as exc:
