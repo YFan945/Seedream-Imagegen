@@ -8,5 +8,4 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 *.pyc
-.*.seedream-request.json
 *.seedream-request.json
