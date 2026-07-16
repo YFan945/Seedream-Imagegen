@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / "skills" / "imagegen"
 
 
+def test_claude_md_stays_in_sync_with_agents_md():
+    assert (ROOT / "CLAUDE.md").read_bytes() == (ROOT / "AGENTS.md").read_bytes()
+
+
 def test_skill_frontmatter_is_valid_yaml():
     content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert content.startswith("---\n")
