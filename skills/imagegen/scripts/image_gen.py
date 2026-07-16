@@ -1233,7 +1233,6 @@ def _validate_generated_image(content: bytes, args: argparse.Namespace) -> None:
         die(f"生成结果不是有效图片：{exc}")
     if actual != expected:
         die(f"生成结果格式与请求不一致：请求 {expected}，实际 {actual or 'unknown'}")
-    profile = getattr(args, "model_profile", resolve_model(getattr(args, "model", None))[0])
     if "x" in args.size.lower():
         expected_width, expected_height = map(int, args.size.lower().split("x", 1))
         if (width, height) != (expected_width, expected_height):
