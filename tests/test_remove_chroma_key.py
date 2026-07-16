@@ -424,6 +424,63 @@ class RemoveChromaKeyTests(unittest.TestCase):
                 with self.subTest(option=option), self.assertRaises(SystemExit):
                     remove_chroma_key._validate_args(args)
 
+    def test_dark_saturated_key_rejects_soft_matte_and_despill(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "source.png"
+            Image.new("RGB", (4, 4), (127, 0, 0)).save(source)
+            for option in ("--soft-matte", "--despill"):
+                args = self.parse_args(
+                    source,
+                    Path(directory) / f"dark-{option[2:]}.png",
+                    "--key-color",
+                    "7f0000",
+                    option,
+                )
+                with self.subTest(option=option), self.assertRaises(SystemExit):
+                    remove_chroma_key._validate_args(args)
+
+    def test_soft_matte_dark_key_fails_controlled_without_writing(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "source.png"
+            Image.new("RGB", (8, 8), (127, 0, 0)).save(source)
+            output = Path(directory) / "out.png"
+            args = self.parse_args(
+                source, output, "--key-color", "7f0000", "--soft-matte"
+            )
+            # 绕过 _validate_args 直接调用核心处理，防御性保护也必须抛出受控
+            # SystemExit，而不是回归前的未捕获 IndexError。
+            with self.assertRaises(SystemExit):
+                remove_chroma_key._remove_chroma_key(args)
+            self.assertFalse(output.exists())
+
+    def test_auto_key_dark_border_rejected_before_writing(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "source.png"
+            Image.new("RGB", (16, 16), (127, 0, 0)).save(source)
+            output = Path(directory) / "out.png"
+            args = self.parse_args(source, output, "--auto-key", "border", "--soft-matte")
+            with self.assertRaises(SystemExit):
+                remove_chroma_key._remove_chroma_key(args)
+            self.assertFalse(output.exists())
+
+    def test_boundary_dark_green_key_remains_supported(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([(0, 128, 0, 255), (20, 110, 20, 255), (255, 0, 0, 255)])
+        remove_chroma_key._apply_alpha_to_image(
+            image,
+            key=(0, 128, 0),
+            tolerance=12,
+            spill_cleanup=True,
+            soft_matte=True,
+            transparent_threshold=12,
+            opaque_threshold=96,
+        )
+        pixels = [image.getpixel((x, 0)) for x in range(3)]
+        self.assertEqual(0, pixels[0][3])
+        self.assertGreater(pixels[1][3], 0)
+        self.assertLess(pixels[1][3], 255)
+        self.assertEqual(255, pixels[2][3])
+
     def test_16_bit_input_has_explicit_rgba8_output_contract(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

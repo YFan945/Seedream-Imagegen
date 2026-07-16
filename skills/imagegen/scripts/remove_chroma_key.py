@@ -75,8 +75,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         args.soft_matte or getattr(args, "spill_cleanup", False)
     ):
         key = _parse_key_color(getattr(args, "key_color", "#00ff00"))
-        if max(key) - min(key) < 96:
-            _die("--soft-matte/--despill 只支持高饱和色键；灰、白、黑键色不受支持。")
+        if max(key) - min(key) < 96 or not _spill_channels(key):
+            _die("--soft-matte/--despill 只支持具有主导亮通道的高饱和色键；灰、白、黑或过暗的键色不受支持。")
 
     source = Path(args.input)
     if not source.is_file():
@@ -264,6 +264,8 @@ def _apply_alpha_to_image(
 
     if soft_matte:
         spill = _spill_channels(key)
+        if not spill:
+            _die("色键缺少主导亮通道（最强通道 < 128），--soft-matte 不受支持。")
         other = [index for index in range(3) if index not in spill]
         spill_strength = source_rgb[spill[0]]
         for index in spill[1:]:
@@ -459,8 +461,8 @@ def _sample_border_key(image, mode: str) -> Color:
     ]
     if len(cluster) / len(samples) < AUTO_KEY_MIN_SHARE:
         _die("自动取色置信度不足；边框颜色不够均匀，请显式传入 --key-color。")
-    if max(candidate) - min(candidate) < 96:
-        _die("自动取色只支持高饱和色键；请显式选择绿色、洋红、蓝色或青色色键。")
+    if max(candidate) - min(candidate) < 96 or not _spill_channels(candidate):
+        _die("自动取色只支持具有主导亮通道的高饱和色键；请显式选择绿色、洋红、蓝色或青色色键。")
     for corner_samples in _corner_sample_groups(image):
         if not corner_samples:
             continue
