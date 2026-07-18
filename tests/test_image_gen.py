@@ -233,7 +233,10 @@ class ImageGenTests(unittest.TestCase):
             args.project_dir = str(root)
             (root / "蓝色杯子.png").touch()
             (root / "蓝色杯子-v2.png").touch()
-            self.assertEqual(root / "蓝色杯子-v3.png", image_gen.output_path(args))
+            self.assertEqual(
+                (root / "蓝色杯子-v3.png").resolve(),
+                image_gen.output_path(args).resolve(),
+            )
 
     def test_private_filenames_hides_content_slug_when_explicitly_enabled(self):
         args = self.make_args(prompt="高度敏感的项目代号", private_filenames=True)
