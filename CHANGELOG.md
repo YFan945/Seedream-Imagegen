@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## v2.0.1 — 2026-07-18
+
+### 修复
+
+- 默认输出固定为项目根目录，并固定使用 prompt 内容 slug 文件名；dry-run 不再输出 prompt、Base64 或远程 URL。
+- 非流式 Lite 组图拒绝 `b64_json`，避免大响应聚合导致的内存与状态不确定风险。
+- 成功请求先标记 `completed`；状态文件清理失败只告警，不再把已写出的图片误报为失败。
+- 测试隔离 `ARK_*` 环境变量，CI whitespace 检查覆盖当前提交历史；增加能力来源清单与发布复核约束。
+
+### 验证
+
+- `python -m pytest -q`：144 passed, 1 skipped, 86 subtests passed。
+
 ## v2.0.0 — 2026-07-15
 
 | 字段 | 内容 |

@@ -39,9 +39,9 @@
 
 ## Payload
 
-通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须说明图一、图二的角色。
+通用字段：`model`、`prompt`、`image`、`size`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须说明图一、图二的角色。CLI 不发送 Seedream 5 不支持的 `seed` 或 `guidance_scale`。
 
-单图显式发送 `"sequential_image_generation":"disabled"`。默认 `output_format` 为 PNG；`response_format` 为 `url` 或 `b64_json`。不要发送 Pro 专属或未被脚本支持的字段。
+单图显式发送 `"sequential_image_generation":"disabled"`。默认 `output_format` 为 PNG；单图可用 `url` 或 `b64_json`，非流式组图仅可用 `url`。不要发送 Pro 专属或未被脚本支持的字段。
 
 ## 组图
 

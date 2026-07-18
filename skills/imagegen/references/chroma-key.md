@@ -24,12 +24,12 @@ python "$skillDir\scripts\remove_chroma_key.py" `
 - `--key-color RRGGBB`：推荐；必须与实际背景一致。
 - `--auto-key border|corners`：仅当四角一致、dominant cluster 占比与均匀度通过时使用；多峰、渐变、低饱和或角落不一致会在写文件前失败。
 - `--tolerance 0..255`：hard key 的逐通道容差，默认 12。
-- `--soft-matte`：使用稳定色度参考估算连续 alpha，并对 partial pixels 做 foreground recovery。
-- `--despill`：只处理 partial edge；fully opaque RGB 保持不变。
+- `--soft-matte`：按 RGB 到键色的最大通道距离映射连续 alpha，并对 partial pixels 做 foreground recovery。
+- `--despill`：处理最终 partial edge；fully opaque RGB 保持不变，配合 `--edge-feather` 时同样生效。
 - `--border-connected`：只移除与画布边框连通的键色区域，避免主体内部孤立键色孔洞。
 - `--edge-contract 0..16`：只收缩 chroma matte。
 - `--edge-feather 0..64`：只向主体内侧柔化 chroma matte，不复活 `source alpha=0`。
-- `--transparent-threshold` / `--opaque-threshold`：旧版兼容参数；新 soft matte 不再用动态距离阈值估算 alpha，不应依赖它们调结果，仅保留 0–255 范围校验。
+- `--transparent-threshold` / `--opaque-threshold`：soft matte 距离映射的两端，默认 `0/255`；前者必须不大于后者。缩小区间会使边缘更快变为不透明。
 
 ## I/O 与 alpha 契约
 

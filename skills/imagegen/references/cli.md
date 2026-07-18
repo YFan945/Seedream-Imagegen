@@ -13,7 +13,7 @@
 ```powershell
 python "$skillDir\scripts\image_gen.py" generate --model lite `
   --prompt "极简陶瓷杯商品摄影" --size 2K `
-  --out "$projectDir\output\seedream\cup.png"
+  --project-dir "$projectDir" --out "$projectDir\output\seedream\cup.png"
 ```
 
 只有显式加入 `--dry-run` 才会执行不计费的本地预检。CLI 不会自动开启它；真实请求需要 `ARK_API_KEY` 和可访问的 Ark 服务，dry-run 不需要网络或密钥。
@@ -40,35 +40,35 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
 
 ## 参数与模式规则
 
-通用参数：`--image`（可重复）、`--size`、`--seed`、`--guidance-scale`、`--output-format`、`--response-format`、`--watermark`/`--no-watermark`、`--out`、`--force`、`--private-filenames`、`--timeout`、`--dry-run`。
+通用参数：`--image`（可重复）、`--size`、`--output-format`、`--response-format`、`--watermark`/`--no-watermark`、`--project-dir`、`--out`、`--force`、`--private-filenames`、`--timeout`、`--dry-run`。Seedream 5.0 Pro/Lite 不接受 `--seed` 或 `--guidance-scale`。
 
 `--cleanup-prompt-file` 仅可与 `--prompt-file` 使用。agent 在项目根目录创建 `.seedream-prompt-<random-id>.txt`：ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，首字符须为字母或数字，不得包含 prompt 摘要。文件必须是普通非 symlink/junction 文件，且不与输入、输出或状态路径冲突。真实生成调用结束后无论成功或失败都删除；dry-run 保留，供后续真实请求复用。
 
 - 默认：Lite、2K、PNG、`url`、无水印、单图、非流式、不开联网、`--timeout 300`。timeout 是单次网络/socket operation 上限，不是整次生成总 deadline。`--watermark` 发送 JSON 布尔值 `true`，`--no-watermark` 发送 `false`。
-- `seed` 必须是 int32；`guidance_scale` 必须为有限的 `[1,10]` 数值。尺寸和功能组合由所选模型本地验证。
+- Pro 自定义 `WIDTHxHEIGHT` 的宽、高均须为 16 的倍数。尺寸和功能组合由所选模型本地验证。
 - Lite 单图发送 `sequential_image_generation="disabled"`；组图使用 `--sequential auto --max-images N`，可选 `--out-dir DIRECTORY`。
-- 组图不能使用 `--out`；单图不能使用 `--out-dir` 或 `--max-images`。Pro 拒绝组图、`--stream`、`--web-search`。
-- `--web-search` 和 `--stream` 仅 Lite。开启搜索工具后由模型决定是否实际搜索，CLI 不会因此自动 dry-run。
+- 组图不能使用 `--out`；单图不能使用 `--out-dir` 或 `--max-images`。Pro 拒绝组图、`--stream`、`--web-search`。组图默认必须保存满 `--max-images`；只有明确接受缺图时才传 `--allow-partial-group`。
+- `--web-search` 和 `--stream` 仅 Lite。开启搜索工具后由模型决定是否实际搜索，CLI 只报告 usage，不能将其当作可引用或已核验的信息。
 
 ## 输入、输出与保存
 
 - `--image` 接受本地路径、公开 HTTP(S) URL 或 `data:image/<小写格式>;base64,...`。支持 jpeg、png、webp、bmp、tiff、gif、heic、heif。
 - 每张输入图不超过 30 MB，宽高均大于 14 px，总像素不超过 36,000,000，宽高比在 `[1/16,16]`。本地/data URI 输入还受 120,000,000 bytes 聚合上限和 170,000,000 bytes 预计完整请求体上限约束；在大量 Base64 编码前预检。HEIC/HEIF 需要 `pillow-heif`。
-- 未传 `--out` 时，单图保存至运行 Claude Code 的当前项目根目录；文件名由 prompt 生成，清理 Windows 非法字符并最多保留 64 个字符。例如 `"极简陶瓷杯商品摄影"` 保存为 `极简陶瓷杯商品摄影.png`。
-- 组图未传 `--out-dir` 时保存至当前项目 `images/`；文件名为 `<提示词>-01.png`、`<提示词>-02.png`……。显式 `--out-dir` 时仍使用 `image-01.ext`、`image-02.ext`……。
+- 未传 `--out` 时，单图固定保存至 `<project-dir>/`；默认名由 prompt 生成内容相关 slug，例如 `极简陶瓷杯商品摄影.png`。
+- 组图未传 `--out-dir` 时固定保存至 `<project-dir>/images/`；文件名为 `<提示词>-01.png`、`-02.png`……。显式 `--out-dir` 时仍使用 `image-01.ext`、`image-02.ext`……。
 - 默认文件名或默认组图冲突时，自动追加 `-v2`、`-v3` 等版本名，不覆盖已有图片。显式 `--out` 用于单图，`--out-dir` 用于组图。
-- `--private-filenames` 让默认名只包含 `seedream-<prompt hash>`，避免在文件名和状态路径泄露 prompt 摘要。
+- 默认落盘目录与内容相关文件名是固定产品规则。`--private-filenames` 默认关闭，且仅在用户或 prompt 明确要求隐藏内容时使用；它改用 `seedream-<prompt hash>`，不是随机命名。
 - 任一路径组件中的 Windows 保留名/非法字符、尾随空格/句点、超过 255 UTF-8 bytes 的名称，以及超过 240 字符的非可移植目标路径都会在 POST 前失败。
 - 输出扩展名必须匹配 `--output-format`；默认 PNG，只有明确需要 JPEG 时使用 `.jpg`/`.jpeg` 与 `--output-format jpeg`。
 - 显式 `--out` 或显式 `--out-dir` 的组图计划目标已存在时不会覆盖；仅获得明确授权才使用 `--force`。`--force` 只覆盖本次计划目标，不清理 `--out-dir` 的其他文件；默认自动命名不需要 `--force`。脚本以原子写入落盘并验证真实图片格式和尺寸。
 
 ## Dry-run、计费与恢复
 
-`--dry-run` 只在命令显式包含该参数时生效，只做本地校验，输出递归脱敏 payload、计划路径、配置来源和 preflight 诊断；不会调用 Ark 或计费。以下情况必须先预检：组图、stream、多参考图、自定义尺寸、显式 model fallback、目标已存在或准备使用 `--force`。`--prompt-file`、`--cleanup-prompt-file`、普通 2K 单图及 `--web-search` 本身不触发也不强制要求 dry-run。
+`--dry-run` 只在命令显式包含该参数时生效，只做本地校验，输出递归脱敏 payload（prompt、Base64、远程 URL 均隐藏）、计划路径、配置来源和 preflight 诊断；不会调用 Ark 或计费。以下情况必须先预检：组图、stream、多参考图、自定义尺寸、显式 model fallback、目标已存在或准备使用 `--force`。`--prompt-file`、`--cleanup-prompt-file`、普通 2K 单图及 `--web-search` 本身不触发也不强制要求 dry-run。
 
-- 单图状态文件为 `.<输出文件名>.seedream-request.json`。显式 `--out-dir` 的组图状态文件为 `<out-dir>/.seedream-request.json`；默认组图在 `images/` 内按提示词摘要使用独立状态文件，互不阻塞。
+- 状态文件按 payload 指纹存于 `<project-dir>/.seedream-requests/<hash>.json`；变更输出路径不能绕过请求锁。用 `python "$skillDir\scripts\image_gen.py" state --project-dir "$projectDir"` 只读查看状态；同步请求不能安全续传。
 - 状态仅保存 payload hash、目标、时间、PID 和状态，不保存 prompt、图片、密钥或 URL。
-- 成功及白名单中能够证明提交前拒绝的 HTTP/Ark code 组合才删除状态；408、429、5xx、未知业务码、超时、中断、断流、响应异常或保存不确定时标记 `ambiguous`。
+- 成功时先将状态标为 `completed` 再尝试删除；清理失败只告警，不把已落盘图片误报为失败，`completed` 状态不会阻止后续请求。白名单中能够证明提交前拒绝的 HTTP/Ark code 组合也会删除状态；408、429、5xx、未知业务码、超时、中断、断流、响应异常或保存不确定时标记 `ambiguous`。
 - 发现 `pending` 或 `ambiguous` 必须停止，先核实输出与计费；不得自动重试或删除状态文件来绕过保护。
 - HTTP 400、内容审核或敏感内容提示本身不能覆盖状态分类。只要状态文件仍为 `pending`/`ambiguous`，agent 不得自行认定“未计费”、手动删除状态或换 prompt 重试；只有 CLI 根据明确拒绝 allowlist 自动删除状态后才能继续。
 - 第一次真实 POST 后，即使 CLI 已把内容审核结果明确分类为 rejected 并自动删除状态，改写 prompt 后的下一次 POST 仍属于可能计费的迭代，必须先取得用户授权。

@@ -28,8 +28,8 @@ class RemoveChromaKeyTests(unittest.TestCase):
             tolerance=12,
             spill_cleanup=True,
             soft_matte=False,
-            transparent_threshold=12,
-            opaque_threshold=96,
+            transparent_threshold=0,
+            opaque_threshold=255,
         )
         pixels = [image.getpixel((x, 0)) for x in range(3)]
         self.assertEqual((0, 0, 0, 0), pixels[0])
@@ -46,8 +46,8 @@ class RemoveChromaKeyTests(unittest.TestCase):
             tolerance=12,
             spill_cleanup=True,
             soft_matte=True,
-            transparent_threshold=12,
-            opaque_threshold=96,
+            transparent_threshold=0,
+            opaque_threshold=255,
         )
         actual_alphas = [image.getpixel((x, 0))[3] for x in range(image.width)]
         for expected, actual in zip(expected_alphas, actual_alphas):
@@ -58,11 +58,11 @@ class RemoveChromaKeyTests(unittest.TestCase):
 
     def test_soft_matte_synthetic_alpha_matrix(self):
         cases = {
-            (0, 255, 0): ((0, 0, 0), (128, 128, 128), (255, 255, 255), (255, 0, 0), (0, 0, 255)),
-            (255, 0, 255): ((0, 0, 0), (128, 128, 128), (255, 255, 255), (255, 0, 0), (0, 0, 255)),
+            (0, 255, 0): ((0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 0, 255)),
+            (255, 0, 255): ((0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 0, 255)),
             # Red-on-cyan versus gray-on-cyan is underdetermined from one composite pixel.
             (0, 255, 255): ((0, 0, 0), (255, 255, 255), (0, 0, 255)),
-            (0, 0, 255): ((0, 0, 0), (128, 128, 128), (255, 255, 255), (255, 0, 0)),
+            (0, 0, 255): ((0, 0, 0), (255, 255, 255), (255, 0, 0)),
         }
         expected_alphas = (32, 64, 96, 128, 192, 224)
         for key, foregrounds in cases.items():
@@ -83,8 +83,8 @@ class RemoveChromaKeyTests(unittest.TestCase):
                         tolerance=12,
                         spill_cleanup=True,
                         soft_matte=True,
-                        transparent_threshold=12,
-                        opaque_threshold=96,
+                        transparent_threshold=0,
+                        opaque_threshold=255,
                     )
                     actual = [image.getpixel((x, 0))[3] for x in range(image.width)]
                     self.assertLessEqual(

@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import http.client
+import ipaddress
 from io import BytesIO
 import json
-import math
 import os
 import re
 import signal
@@ -52,11 +52,17 @@ MAX_TOTAL_LITE_IMAGES = 15
 MIN_ASPECT_RATIO = 1 / 16
 MAX_ASPECT_RATIO = 16
 MAX_INPUT_PIXELS = 36_000_000
-MIN_SEED = -(2**31)
-MAX_SEED = 2**31 - 1
 ENV_KEYS = ("ARK_API_KEY", "ARK_BASE_URL", "ARK_PRO_MODEL", "ARK_LITE_MODEL")
 API_KEY_PLACEHOLDERS = frozenset(
-    {"your api key", "your-api-key", "replace-me", "changeme", "<api-key>"}
+    {
+        "your api key",
+        "your-api-key",
+        "your_ark_api_key",
+        "你的_ark_api_key",
+        "replace-me",
+        "changeme",
+        "<api-key>",
+    }
 )
 WINDOWS_RESERVED_STEMS = frozenset(
     {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
@@ -152,6 +158,7 @@ class OutputPlan:
     display_path: Path
     targets: tuple[Path, ...]
     state_path: Path
+    legacy_state_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +360,9 @@ def _inspect_image_bytes(content: bytes, *, declared_subtype: str, source: str) 
             actual_subtype = _normalize_pil_format(image.format, declared_subtype)
             width, height = image.size
             image.verify()
+        # Pillow 的 verify() 不会完整解码 JPEG；必须重新打开并 load()，否则截断图片会漏过预检。
+        with Image.open(BytesIO(content)) as image:
+            image.load()
     except image_errors + (OSError, ValueError) as exc:
         die(f"输入图片损坏或无法解码：{source}（{exc}）")
     if actual_subtype != declared_subtype:
@@ -367,8 +377,11 @@ def _inspect_image_bytes(content: bytes, *, declared_subtype: str, source: str) 
 def _validate_remote_url(value: str) -> str:
     if not value or any(character.isspace() or ord(character) < 32 for character in value):
         die("输入图片 URL 不允许包含空白或控制字符。")
-    parsed = urllib.parse.urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        die(f"输入图片 URL 无效：{value}")
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         die(f"输入图片 URL 无效：{value}")
     if parsed.username or parsed.password:
         die("输入图片 URL 不允许包含用户名或密码。")
@@ -376,6 +389,15 @@ def _validate_remote_url(value: str) -> str:
         parsed.port
     except ValueError:
         die("输入图片 URL 端口无效。")
+    hostname = parsed.hostname.casefold()
+    if hostname == "localhost":
+        die("输入图片 URL 必须是公网地址，不能使用 localhost。")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return value
+    if not address.is_global:
+        die("输入图片 URL 必须是公网地址，不能使用私网、回环或保留 IP。")
     return value
 
 
@@ -399,9 +421,9 @@ def _data_uri_to_api_value(value: str) -> str:
 
 
 def image_to_api_value(value: str) -> str:
-    if value.startswith("data:"):
+    if value.casefold().startswith("data:"):
         return _data_uri_to_api_value(value)
-    if value.startswith(("http://", "https://")):
+    if value.casefold().startswith(("http:", "https:")):
         return _validate_remote_url(value)
     path = Path(value)
     if not path.is_file():
@@ -484,6 +506,8 @@ def _normalize_size(value: str, profile: ModelProfile | None = None) -> str:
         )
     if not MIN_ASPECT_RATIO <= ratio <= MAX_ASPECT_RATIO:
         die(f"自定义输出尺寸宽高比必须在 [1/16, 16]：{width}x{height}")
+    if profile.tier == "pro" and (width % 16 or height % 16):
+        die(f"Seedream 5.0 Pro 自定义输出宽和高必须均为 16 的倍数：{width}x{height}")
     return f"{width}x{height}"
 
 
@@ -491,7 +515,10 @@ def _normalize_base_url(value: str | None = None) -> str:
     raw = (value or DEFAULT_BASE_URL).strip().rstrip("/")
     if not raw or any(character.isspace() or ord(character) < 32 for character in raw):
         die("ARK_BASE_URL 不能为空或包含空白、控制字符。")
-    parsed = urllib.parse.urlsplit(raw)
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError:
+        die("ARK_BASE_URL 必须是有效的 HTTP(S) 基础地址。")
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         die("ARK_BASE_URL 必须是有效的 HTTP(S) 基础地址。")
     if parsed.username or parsed.password:
@@ -521,10 +548,9 @@ def validate_args(args: argparse.Namespace, config: ArkConfig | None = None) -> 
     args.model_profile = profile
     args.requested_model = requested
     if args.guidance_scale is not None:
-        if not math.isfinite(args.guidance_scale) or not 1 <= args.guidance_scale <= 10:
-            die("--guidance-scale 必须是 1 到 10 之间的有限数值。")
-    if args.seed is not None and not MIN_SEED <= args.seed <= MAX_SEED:
-        die(f"--seed 必须是 {MIN_SEED} 到 {MAX_SEED} 之间的整数。")
+        die("Seedream 5.0 Pro/Lite 不支持 --guidance-scale。")
+    if args.seed is not None:
+        die("Seedream 5.0 Pro/Lite 不支持 --seed。")
     if args.timeout < 1:
         die("--timeout 必须大于 0。")
     if args.cleanup_prompt_file and not args.prompt_file:
@@ -558,9 +584,13 @@ def validate_args(args: argparse.Namespace, config: ArkConfig | None = None) -> 
                 "Seedream 5.0 Lite 要求参考图数量 + 最终生成图片数量不超过 15；"
                 f"当前最多可生成 {max_allowed} 张。"
             )
+        if args.response_format == "b64_json" and not args.stream:
+            die("Lite 组图不支持 b64_json；请使用 response-format=url，避免响应与内存上限风险。")
     else:
         if args.max_images is not None:
             die("--max-images 仅可与 --sequential auto 一起使用。")
+        if getattr(args, "allow_partial_group", False):
+            die("--allow-partial-group 仅可与 --sequential auto 一起使用。")
         if args.out_dir:
             die("单图模式使用 --out，不能使用 --out-dir。")
 
@@ -579,10 +609,6 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         _preflight_image_payload(args.image)
         images = [image_to_api_value(item) for item in args.image]
         payload["image"] = images[0] if len(images) == 1 else images
-    if args.seed is not None:
-        payload["seed"] = args.seed
-    if args.guidance_scale is not None:
-        payload["guidance_scale"] = args.guidance_scale
     if profile.tier == "lite":
         payload["sequential_image_generation"] = args.sequential
         if args.sequential == "auto":
@@ -611,6 +637,9 @@ def preview_payload(
             for item in values
         ]
         preview["image"] = redacted if is_list else redacted[0]
+    # dry-run 输出常被 CI、终端记录和聊天转录保存；prompt 默认不属于可安全展示内容。
+    if "prompt" in preview:
+        preview["prompt"] = "<redacted prompt>"
     return _scrub_structure(preview, secrets=secrets)
 
 
@@ -659,19 +688,26 @@ def _validate_portable_target(path: Path) -> None:
         die(f"输出路径超过 {MAX_PORTABLE_PATH_LENGTH} 字符可移植上限：{path}")
 
 
-def _next_default_output_path(prompt: str, suffix: str, *, private: bool = False) -> Path:
+def _next_default_output_path(
+    prompt: str, suffix: str, *, directory: Path = DEFAULT_OUTPUT_DIRECTORY, private: bool = False
+) -> Path:
     """Return a non-conflicting prompt-derived path in the current project."""
     stem = _selected_output_stem(prompt, private)
-    candidate = DEFAULT_OUTPUT_DIRECTORY / f"{stem}{suffix}"
+    candidate = directory / f"{stem}{suffix}"
     version = 2
     while candidate.exists():
-        candidate = DEFAULT_OUTPUT_DIRECTORY / f"{stem}-v{version}{suffix}"
+        candidate = directory / f"{stem}-v{version}{suffix}"
         version += 1
     return candidate
 
 
 def _default_group_targets(
-    prompt: str, suffix: str, count: int, *, private: bool = False
+    prompt: str,
+    suffix: str,
+    count: int,
+    *,
+    directory: Path = DEFAULT_GROUP_OUTPUT_DIRECTORY,
+    private: bool = False,
 ) -> tuple[Path, tuple[Path, ...]]:
     """Return a non-conflicting prompt-derived group under the project images directory."""
     stem = _selected_output_stem(prompt, private)
@@ -679,19 +715,21 @@ def _default_group_targets(
     while True:
         group_stem = stem if version == 1 else f"{stem}-v{version}"
         targets = tuple(
-            DEFAULT_GROUP_OUTPUT_DIRECTORY / f"{group_stem}-{index:02d}{suffix}"
+            directory / f"{group_stem}-{index:02d}{suffix}"
             for index in range(1, count + 1)
         )
         if not any(path.exists() for path in targets):
-            return DEFAULT_GROUP_OUTPUT_DIRECTORY, targets
+            return directory, targets
         version += 1
 
 
-def _default_group_state_path(prompt: str, *, private: bool = False) -> Path:
+def _default_group_state_path(
+    prompt: str, *, directory: Path = DEFAULT_GROUP_OUTPUT_DIRECTORY, private: bool = False
+) -> Path:
     """Scope default-group recovery state to the exact prompt, not all of images/."""
     stem = _selected_output_stem(prompt, private)
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
-    return DEFAULT_GROUP_OUTPUT_DIRECTORY / f".{stem}-{prompt_hash}.seedream-request.json"
+    return directory / f".{stem}-{prompt_hash}.seedream-request.json"
 
 
 def _resolved_prompt(args: argparse.Namespace) -> str:
@@ -706,7 +744,10 @@ def output_path(args: argparse.Namespace, *, check_conflicts: bool = True) -> Pa
         Path(args.out)
         if args.out
         else _next_default_output_path(
-            prompt, suffix, private=getattr(args, "private_filenames", False)
+            prompt,
+            suffix,
+            directory=_project_directory(args),
+            private=getattr(args, "private_filenames", False),
         )
     )
     if not path.suffix:
@@ -741,10 +782,11 @@ def build_output_plan(args: argparse.Namespace, *, check_conflicts: bool = True)
         else:
             prompt = _resolved_prompt(args)
             private = getattr(args, "private_filenames", False)
+            directory = _project_directory(args) / DEFAULT_GROUP_OUTPUT_DIRECTORY
             directory, targets = _default_group_targets(
-                prompt, suffix, args.max_images, private=private
+                prompt, suffix, args.max_images, directory=directory, private=private
             )
-            state_path = _default_group_state_path(prompt, private=private)
+            state_path = _default_group_state_path(prompt, directory=directory, private=private)
         if directory.exists() and not directory.is_dir():
             die(f"组图输出路径不是目录：{directory}")
         invalid_targets = [path for path in targets if path.exists() and not path.is_file()]
@@ -763,6 +805,7 @@ def build_output_plan(args: argparse.Namespace, *, check_conflicts: bool = True)
             display_path=directory,
             targets=targets,
             state_path=state_path,
+            legacy_state_paths=(state_path,),
         )
     path = output_path(args, check_conflicts=check_conflicts)
     return OutputPlan(
@@ -770,6 +813,7 @@ def build_output_plan(args: argparse.Namespace, *, check_conflicts: bool = True)
         display_path=path,
         targets=(path,),
         state_path=_request_state_path(path),
+        legacy_state_paths=(_request_state_path(path),),
     )
 
 
@@ -788,11 +832,14 @@ def prepare_output_destination(plan: OutputPlan) -> None:
 
 def _dry_run_diagnostics(plan: OutputPlan, args: argparse.Namespace) -> dict[str, Any]:
     conflicts = [str(path) for path in plan.targets if path.exists()]
+    state_paths = (plan.state_path, *plan.legacy_state_paths)
+    active_states = [str(path) for path in state_paths if path.exists()]
     return {
         "output_conflicts": conflicts,
         "force_requested": bool(args.force),
-        "request_state": "present" if plan.state_path.exists() else "absent",
-        "billable_request_blocked": bool(plan.state_path.exists()),
+        "request_state": "present" if active_states else "absent",
+        "active_request_states": active_states,
+        "billable_request_blocked": bool(active_states),
     }
 
 
@@ -845,6 +892,10 @@ def _safe_http_error(exc: urllib.error.HTTPError, api_key: str) -> tuple[str, st
             message = str(error.get("message") or body)
             request_id = str(error.get("request_id") or "")
         if isinstance(parsed, dict):
+            # 部分网关直接把 code/message 放在顶层；若不读取它们，401 等明确拒绝
+            # 会被误标为未知，从而留下不必要的付费请求锁。
+            code = code or str(parsed.get("code") or "")
+            message = str(parsed.get("message") or message)
             request_id = request_id or str(parsed.get("request_id") or "")
     except json.JSONDecodeError:
         pass
@@ -859,6 +910,8 @@ def _safe_http_error(exc: urllib.error.HTTPError, api_key: str) -> tuple[str, st
 
 def classify_submission_outcome(http_status: int, ark_code: str) -> str:
     """Classify whether an HTTP response proves the billable work was rejected."""
+    if http_status == 401:
+        return "rejected"
     if (http_status, ark_code) in REJECTED_HTTP_ARK_CODES:
         return "rejected"
     return "ambiguous"
@@ -899,6 +952,22 @@ def _request_fingerprint(payload: dict[str, Any]) -> str:
 
     update(payload)
     return digest.hexdigest()
+
+
+def _payload_state_path(args: argparse.Namespace, payload: dict[str, Any]) -> Path:
+    """Return the project-scoped lock path for one exact billable payload."""
+    fingerprint = _request_fingerprint(payload)
+    return _project_directory(args) / ".seedream-requests" / f"{fingerprint}.json"
+
+
+def _with_payload_state_path(
+    plan: OutputPlan, args: argparse.Namespace, payload: dict[str, Any]
+) -> OutputPlan:
+    """Keep legacy output-scoped locks while using a payload-scoped primary lock."""
+    state_path = _payload_state_path(args, payload)
+    _validate_portable_target(state_path)
+    legacy = tuple(dict.fromkeys((*plan.legacy_state_paths, plan.state_path)))
+    return replace(plan, state_path=state_path, legacy_state_paths=legacy)
 
 
 def _utc_now() -> str:
@@ -969,17 +1038,44 @@ def _mark_request_ambiguous(
     reason: str,
     *,
     api_key: str = "",
+    secrets: Iterable[str] = (),
 ) -> None:
     state["status"] = "ambiguous"
     state["updated_at"] = _utc_now()
-    state["reason"] = _redact_message(reason, api_key or os.getenv("ARK_API_KEY", "").strip())
+    state["reason"] = _scrub_structure(
+        reason,
+        secrets=(api_key or os.getenv("ARK_API_KEY", "").strip(), *secrets),
+    )
     _write_request_state(state_path, state)
 
 
+def _finalize_completed_state(state_path: Path, state: dict[str, Any]) -> None:
+    """Best-effort cleanup: a successful image write must not become a CLI failure."""
+    state["status"] = "completed"
+    state["updated_at"] = _utc_now()
+    try:
+        _write_request_state(state_path, state)
+        state_path.unlink(missing_ok=True)
+    except (OSError, SystemExit) as exc:
+        print(
+            f"Warning: 图片已保存，但无法清理请求状态：{state_path}（{exc}）；"
+            "状态已标记 completed，不会阻止后续请求。",
+            file=sys.stderr,
+        )
+
+
 def _ensure_no_request_state(plan: OutputPlan) -> None:
-    if plan.state_path.exists():
+    for state_path in (plan.state_path, *plan.legacy_state_paths):
+        if not state_path.exists():
+            continue
+        try:
+            status = json.loads(state_path.read_text(encoding="utf-8")).get("status")
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+            status = None
+        if status == "completed":
+            continue
         die(
-            f"检测到未完成或状态未知的付费请求：{plan.state_path}。不得自动重试；"
+            f"检测到未完成或状态未知的付费请求：{state_path}。不得自动重试；"
             "请先核实输出和计费状态，确认接受可能的重复计费后再手动删除该状态文件。"
         )
 
@@ -1005,6 +1101,33 @@ def _project_directory(args: argparse.Namespace) -> Path:
         or os.getenv("CLAUDE_PROJECT_DIR", "")
         or Path.cwd()
     ).resolve(strict=False)
+
+
+def inspect_request_states(args: argparse.Namespace) -> None:
+    """List project-scoped submission locks without exposing payload contents."""
+    directory = _project_directory(args) / ".seedream-requests"
+    states: list[dict[str, Any]] = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                states.append({"path": str(path), "status": "invalid"})
+                continue
+            if not isinstance(value, dict):
+                states.append({"path": str(path), "status": "invalid"})
+                continue
+            states.append(
+                {
+                    "path": str(path),
+                    "status": str(value.get("status") or "unknown"),
+                    "output": str(value.get("output") or ""),
+                    "started_at": str(value.get("started_at") or ""),
+                    "updated_at": str(value.get("updated_at") or ""),
+                    "reason": str(value.get("reason") or ""),
+                }
+            )
+    print(json.dumps({"project_dir": str(_project_directory(args)), "states": states}, ensure_ascii=False, indent=2))
 
 
 def _validate_prompt_cleanup_path(args: argparse.Namespace) -> Path:
@@ -1046,7 +1169,7 @@ def _ensure_prompt_cleanup_not_plan_conflict(
     if not args.cleanup_prompt_file:
         return
     prompt_path = Path(args.prompt_file).resolve(strict=False)
-    protected = (*plan.targets, plan.state_path)
+    protected = (*plan.targets, plan.state_path, *plan.legacy_state_paths)
     if any(path.resolve(strict=False) == prompt_path for path in protected):
         die("prompt 临时文件不得与输出目标或请求状态文件相同。")
 
@@ -1175,6 +1298,25 @@ def api_stream(
         yield from _decode_sse_events(response)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so a public URL cannot pivot this downloader to an intranet host."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _open_public_url(request: urllib.request.Request, timeout: int) -> Any:
+    return urllib.request.build_opener(_NoRedirect()).open(request, timeout=timeout)
+
+
 def download_bytes(url: str, timeout: int, attempts: int = 3) -> bytes:
     request = urllib.request.Request(
         _validate_remote_url(url),
@@ -1183,7 +1325,7 @@ def download_bytes(url: str, timeout: int, attempts: int = 3) -> bytes:
     last_error = "unknown"
     for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _open_public_url(request, timeout) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length:
                     try:
@@ -1204,6 +1346,8 @@ def download_bytes(url: str, timeout: int, attempts: int = 3) -> bytes:
                 return b"".join(chunks)
         except urllib.error.HTTPError as exc:
             last_error = f"HTTP {exc.code}"
+            if 300 <= exc.code < 400:
+                die("生成图片 URL 不允许重定向，以避免跳转到不安全地址。")
             if exc.code < 500 or attempt == attempts:
                 break
         except (
@@ -1229,6 +1373,8 @@ def _validate_generated_image(content: bytes, args: argparse.Namespace) -> None:
             actual = PIL_FORMAT_TO_SUBTYPE.get((image.format or "").upper())
             width, height = image.size
             image.verify()
+        with Image.open(BytesIO(content)) as image:
+            image.load()
     except image_errors + (OSError, ValueError) as exc:
         die(f"生成结果不是有效图片：{exc}")
     if actual != expected:
@@ -1240,6 +1386,8 @@ def _validate_generated_image(content: bytes, args: argparse.Namespace) -> None:
                 "生成结果尺寸与自定义请求不一致："
                 f"请求 {expected_width}x{expected_height}，实际 {width}x{height}"
             )
+        if args.model_profile.tier == "pro" and (width % 16 or height % 16):
+            die(f"生成结果尺寸不是 Pro 要求的 16 倍数：{width}x{height}")
     else:
         pixels = width * height
         ratio = width / height
@@ -1256,6 +1404,7 @@ def _validate_generated_image(content: bytes, args: argparse.Namespace) -> None:
 def _atomic_write(path: Path, content: bytes, *, force: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
+    created_target = False
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb", delete=False, dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
@@ -1277,9 +1426,11 @@ def _atomic_write(path: Path, content: bytes, *, force: bool) -> None:
                 # no-clobber 语义不变，崩溃原子性在这类环境无法更强。
                 try:
                     with path.open("xb") as target:
+                        created_target = True
                         target.write(content)
                         target.flush()
                         os.fsync(target.fileno())
+                    created_target = False
                 except FileExistsError:
                     die(f"保存前检测到输出文件已被创建，拒绝覆盖：{path}")
                 except OSError as exc:
@@ -1291,6 +1442,12 @@ def _atomic_write(path: Path, content: bytes, *, force: bool) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+        if created_target:
+            # 排他创建后的写入失败不能留下半截最终文件。
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _item_bytes(item: dict[str, Any], args: argparse.Namespace) -> bytes:
@@ -1301,9 +1458,12 @@ def _item_bytes(item: dict[str, Any], args: argparse.Namespace) -> bytes:
         if len(encoded) > ((MAX_OUTPUT_BYTES + 2) // 3) * 4:
             die("Ark API 返回的 Base64 图片超过 100 MB 安全上限。")
         try:
-            return base64.b64decode(encoded, validate=True)
+            content = base64.b64decode(encoded, validate=True)
         except (binascii.Error, TypeError, ValueError):
             die("Ark API 返回了非法 Base64 图片数据。")
+        if len(content) > MAX_OUTPUT_BYTES:
+            die("Ark API 返回的 Base64 图片超过 100 MB 安全上限。")
+        return content
     if item.get("url"):
         return download_bytes(str(item["url"]), args.timeout)
     die("Ark API 图片项缺少 url 或 b64_json。")
@@ -1318,6 +1478,38 @@ def _save_item(item: dict[str, Any], args: argparse.Namespace, path: Path) -> Pa
     return path
 
 
+def _item_error(item: dict[str, Any]) -> str | None:
+    error = item.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = _redact_message(str(error.get("code") or "unknown"))
+    message = _redact_message(str(error.get("message") or "image generation failed"))
+    return f"{code}: {message}"
+
+
+def _usage_generated_images(usage: Any) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    generated = usage.get("generated_images")
+    return generated if isinstance(generated, int) and not isinstance(generated, bool) else None
+
+
+def _raise_incomplete_group(
+    saved: list[Path], failures: list[str], args: argparse.Namespace, plan: OutputPlan
+) -> None:
+    if not plan.group or len(saved) == len(plan.targets):
+        return
+    detail = f"；失败项：{' | '.join(failures)}" if failures else ""
+    message = (
+        f"组图未完成：请求 {len(plan.targets)} 张，已保存 {len(saved)} 张。"
+        f"已保存文件会保留{detail}"
+    )
+    if getattr(args, "allow_partial_group", False):
+        print(f"Warning: {message}", file=sys.stderr)
+        return
+    raise ArkRequestError(message, ambiguous=False)
+
+
 def save_response(
     result: dict[str, Any], args: argparse.Namespace, plan: OutputPlan
 ) -> list[Path]:
@@ -1326,17 +1518,36 @@ def save_response(
         die("Ark API 返回的 data 不是数组。")
     if plan.group:
         if not 1 <= len(data) <= len(plan.targets):
-            die(
-                f"Seedream 5.0 Lite 组图应返回 1 到 {len(plan.targets)} 张图片，"
-                f"实际 data 数量：{len(data)}"
+            raise ArkRequestError(
+                f"Seedream 5.0 Lite 组图响应数量无效：期望 1 到 {len(plan.targets)}，"
+                f"实际 {len(data)}。",
+                ambiguous=True,
             )
     elif len(data) != 1:
-        die(f"单图模式应返回且只返回一张图片，实际 data 数量：{len(data)}")
+        raise ArkRequestError(f"单图模式应返回且只返回一张图片，实际 data 数量：{len(data)}", ambiguous=True)
     saved: list[Path] = []
+    failures: list[str] = []
     for index, item in enumerate(data):
         if not isinstance(item, dict):
-            die("Ark API 图片项不是对象。")
+            raise ArkRequestError("Ark API 图片项不是对象。", ambiguous=True)
+        error = _item_error(item)
+        if error:
+            failures.append(error)
+            print(f"Warning: 图片生成部分失败：{error}", file=sys.stderr)
+            continue
         saved.append(_save_item(item, args, plan.targets[index]))
+    generated_images = _usage_generated_images(result.get("usage"))
+    if generated_images is not None and generated_images != len(saved):
+        raise ArkRequestError(
+            f"Ark usage.generated_images={generated_images}，但本地仅保存 {len(saved)} 张图片。",
+            ambiguous=True,
+        )
+    if not saved:
+        detail = f"；失败项：{' | '.join(failures)}" if failures else ""
+        raise ArkRequestError(f"Ark API 未返回可保存图片{detail}", ambiguous=False)
+    _raise_incomplete_group(saved, failures, args, plan)
+    if isinstance(result.get("usage"), dict):
+        print(f"Usage: {json.dumps(result['usage'], ensure_ascii=False)}", file=sys.stderr)
     return saved
 
 
@@ -1354,6 +1565,7 @@ def save_stream_response(
     completed = False
     seen: set[str] = set()
     partial_errors: list[str] = []
+    usage_generated: int | None = None
     for event in events:
         event_type = str(event.get("type") or "")
         if event_type == "image_generation.partial_image":
@@ -1370,11 +1582,21 @@ def save_stream_response(
         if event_type == "image_generation.partial_succeeded":
             item = _stream_item(event)
             image_index = event.get("image_index", event.get("partial_image_index"))
+            target_index: int
             if image_index is not None:
+                if not isinstance(image_index, int) or isinstance(image_index, bool):
+                    raise ArkRequestError("Ark 流式事件 image_index 不是整数。", ambiguous=True)
+                target_index = image_index
+                if not 0 <= target_index < len(plan.targets):
+                    raise ArkRequestError(
+                        f"Ark 流式事件 image_index 超出计划范围：{target_index}", ambiguous=True
+                    )
                 token_source = f"index:{image_index}"
             elif item.get("url"):
+                target_index = len(saved)
                 token_source = f"url:{item['url']}"
             elif item.get("b64_json"):
+                target_index = len(saved)
                 token_source = f"base64:{item['b64_json']}"
             else:
                 die("Ark 流式成功事件缺少图片数据。")
@@ -1384,20 +1606,27 @@ def save_stream_response(
             seen.add(token)
             if len(saved) >= len(plan.targets):
                 die(f"流式响应图片数量超过计划上限 {len(plan.targets)}。")
-            saved.append(_save_item(item, args, plan.targets[len(saved)]))
+            saved.append(_save_item(item, args, plan.targets[target_index]))
             continue
         if event_type == "image_generation.completed":
             completed = True
             usage = event.get("usage")
             if isinstance(usage, dict):
+                usage_generated = _usage_generated_images(usage)
                 print(f"Usage: {json.dumps(usage, ensure_ascii=False)}", file=sys.stderr)
     if not completed:
         raise ArkRequestError("Ark 流式响应未收到 completed 事件。", ambiguous=True)
     if not saved:
         detail = f"；部分错误：{' | '.join(partial_errors)}" if partial_errors else ""
-        raise ArkRequestError(f"Ark 流式响应没有成功图片{detail}", ambiguous=True)
+        raise ArkRequestError(f"Ark 流式响应没有成功图片{detail}", ambiguous=not bool(partial_errors))
     if not plan.group and len(saved) != 1:
         raise ArkRequestError("单图流式响应返回了多张图片。", ambiguous=True)
+    if usage_generated is not None and usage_generated != len(saved):
+        raise ArkRequestError(
+            f"Ark usage.generated_images={usage_generated}，但本地仅保存 {len(saved)} 张图片。",
+            ambiguous=True,
+        )
+    _raise_incomplete_group(saved, partial_errors, args, plan)
     return saved
 
 
@@ -1407,6 +1636,8 @@ def _run(args: argparse.Namespace) -> None:
     plan = build_output_plan(args, check_conflicts=not args.dry_run)
     _ensure_prompt_cleanup_not_plan_conflict(args, plan)
     payload = build_payload(args)
+    plan = _with_payload_state_path(plan, args, payload)
+    _ensure_prompt_cleanup_not_plan_conflict(args, plan)
     if args.dry_run:
         print(
             json.dumps(
@@ -1429,12 +1660,17 @@ def _run(args: argparse.Namespace) -> None:
     prepare_output_destination(plan)
     _require_api_key(config)
     state_path, state = _new_request_state(plan, payload)
+    args.submission_started = True
     started = time.monotonic()
     previous_handlers: dict[int, Any] = {}
 
     def handle_termination(signum, _frame) -> None:
         _mark_request_ambiguous(
-            state_path, state, f"进程收到终止信号 {signum}", api_key=config.api_key
+            state_path,
+            state,
+            f"进程收到终止信号 {signum}",
+            api_key=config.api_key,
+            secrets=(args.resolved_prompt,),
         )
         raise SystemExit(128 + signum)
 
@@ -1452,17 +1688,33 @@ def _run(args: argparse.Namespace) -> None:
             save_response(api_request(payload, args.timeout, config), args, plan)
     except ArkRequestError as exc:
         if exc.ambiguous:
-            _mark_request_ambiguous(state_path, state, str(exc), api_key=config.api_key)
+            _mark_request_ambiguous(
+                state_path,
+                state,
+                str(exc),
+                api_key=config.api_key,
+                secrets=(args.resolved_prompt,),
+            )
         else:
             state_path.unlink(missing_ok=True)
         die(str(exc))
     except KeyboardInterrupt:
-        _mark_request_ambiguous(state_path, state, "用户中断请求", api_key=config.api_key)
+        _mark_request_ambiguous(
+            state_path,
+            state,
+            "用户中断请求",
+            api_key=config.api_key,
+            secrets=(args.resolved_prompt,),
+        )
         die("请求已被中断，结果和计费状态未知；不得自动重试。", 130)
     except SystemExit:
         if state_path.exists() and state.get("status") != "ambiguous":
             _mark_request_ambiguous(
-                state_path, state, "请求提交后的处理失败", api_key=config.api_key
+                state_path,
+                state,
+                "请求提交后的处理失败",
+                api_key=config.api_key,
+                secrets=(args.resolved_prompt,),
             )
         raise
     except BaseException as exc:
@@ -1471,10 +1723,11 @@ def _run(args: argparse.Namespace) -> None:
             state,
             f"未处理异常：{type(exc).__name__}",
             api_key=config.api_key,
+            secrets=(args.resolved_prompt,),
         )
         raise
     else:
-        state_path.unlink(missing_ok=True)
+        _finalize_completed_state(state_path, state)
     finally:
         for signum, previous in previous_handlers.items():
             try:
@@ -1485,12 +1738,13 @@ def _run(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
+    args.submission_started = False
     try:
         _run(args)
     finally:
         # dry-run 常作为真实请求前的同形预检，需要保留 prompt 供后续调用；
         # 真实生成尝试一旦结束，无论成功或失败都清理显式标记的 agent prompt。
-        if not getattr(args, "dry_run", False):
+        if getattr(args, "submission_started", False):
             _cleanup_prompt_file(args)
 
 
@@ -1513,7 +1767,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="显式允许未知模型兼容回退 Lite；真实请求前必须审查 warning",
     )
-    parser.add_argument("--project-dir", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--project-dir",
+        help="项目根目录；默认输出、状态锁和 agent 临时 prompt 的根目录",
+    )
     parser.add_argument("--image", action="append", help="本地路径、HTTP(S) URL 或 data URI")
     parser.add_argument("--size", default=DEFAULT_SIZE, help="模型支持的分辨率档位或 WIDTHxHEIGHT")
     parser.add_argument("--seed", type=int)
@@ -1528,6 +1785,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--watermark", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--sequential", choices=["disabled", "auto"], default="disabled")
     parser.add_argument("--max-images", type=int)
+    parser.add_argument(
+        "--allow-partial-group",
+        action="store_true",
+        help="允许组图少于 --max-images 时以警告结束；默认将其视为未完成。",
+    )
     parser.add_argument("--web-search", action="store_true")
     parser.add_argument("--stream", action="store_true")
     parser.add_argument("--out", help="单图输出文件")
@@ -1536,7 +1798,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--private-filenames",
         action="store_true",
-        help="默认输出名仅使用 seedream + prompt hash，不暴露 prompt 摘要",
+        help="使用 prompt hash 作为默认文件名；默认关闭，仅在需要隐藏内容时启用",
     )
     parser.add_argument(
         "--timeout",
@@ -1566,7 +1828,15 @@ def main() -> int:
     add_common_args(generate)
     edit = subparsers.add_parser("edit", help="使用一张或多张参考图进行编辑")
     add_common_args(edit)
+    state = subparsers.add_parser("state", help="查看项目中的请求状态锁（不输出请求内容）")
+    state.add_argument(
+        "--project-dir",
+        help="项目根目录；默认 CLAUDE_PROJECT_DIR 或当前目录。",
+    )
     args = parser.parse_args()
+    if args.command == "state":
+        inspect_request_states(args)
+        return 0
     if args.command == "edit" and not args.image:
         die("edit 子命令至少需要一个 --image。")
     run(args)

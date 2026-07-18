@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
 import math
@@ -20,10 +20,8 @@ import warnings
 
 Color: TypeAlias = tuple[int, int, int]
 ALPHA_NOISE_FLOOR = 8
-KEY_DOMINANCE_THRESHOLD = 16.0
 MAX_INPUT_BYTES = 30_000_000
 MAX_INPUT_PIXELS = 36_000_000
-AUTO_KEY_QUANTIZATION = 16
 AUTO_KEY_CLUSTER_RADIUS = 24
 AUTO_KEY_MIN_SHARE = 0.70
 
@@ -69,6 +67,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     _validate_number(args.opaque_threshold, "--opaque-threshold", 0, 255)
     _validate_number(args.edge_feather, "--edge-feather", 0, 64)
     _validate_number(args.edge_contract, "--edge-contract", 0, 16)
+    if args.transparent_threshold > args.opaque_threshold:
+        _die("--transparent-threshold 不能大于 --opaque-threshold。")
     if getattr(args, "auto_key", "none") == "none" and (
         args.soft_matte or getattr(args, "spill_cleanup", False)
     ):
@@ -109,16 +109,6 @@ def _spill_channels(key: Color) -> list[int]:
     if strongest < 128:
         return []
     return [index for index, value in enumerate(key) if value >= 128 and value >= strongest - 16]
-
-
-def _key_dominance(rgb: Color, key: Color) -> float:
-    spill = _spill_channels(key)
-    if not spill:
-        return 0.0
-    other = [index for index in range(3) if index not in spill]
-    key_strength = min(rgb[index] for index in spill)
-    other_strength = max((rgb[index] for index in other), default=0)
-    return float(key_strength - other_strength)
 
 
 def _retain_border_connected_matte(matte):
@@ -173,7 +163,6 @@ def _apply_alpha_to_image(
     edge_feather: float = 0.0,
     border_connected: bool = False,
 ) -> ChromaStats:
-    del transparent_threshold, opaque_threshold
     Image, _, ImageChops, _, _ = _load_pillow()
     from PIL import ImageMath
 
@@ -189,43 +178,22 @@ def _apply_alpha_to_image(
     hard_matte = distance.point(lambda value: 0 if value <= tolerance else 255)
 
     if soft_matte:
-        spill = _spill_channels(key)
-        if not spill:
+        if not _spill_channels(key):
             _die("色键缺少主导亮通道（最强通道 < 128），--soft-matte 不受支持。")
-        other = [index for index in range(3) if index not in spill]
-        spill_strength = source_rgb[spill[0]]
-        for index in spill[1:]:
-            spill_strength = ImageChops.darker(spill_strength, source_rgb[index])
-        other_strength = source_rgb[other[0]] if other else Image.new("L", image.size, 0)
-        for index in other[1:]:
-            other_strength = ImageChops.lighter(other_strength, source_rgb[index])
-        dominance = ImageChops.subtract(spill_strength, other_strength)
-        key_reference = max(1.0, _key_dominance(key, key))
-        neutral_matte = dominance.point(
-            lambda value: _clamp_channel(255 * (1.0 - min(1.0, value / key_reference)))
-        )
-        matte = neutral_matte
-
-        if len(spill) == 1 and len(other) >= 2:
-            high = ImageChops.lighter(source_rgb[other[0]], source_rgb[other[1]])
-            low = ImageChops.darker(source_rgb[other[0]], source_rgb[other[1]])
-            spread = ImageChops.subtract(high, low)
-            spill_index = spill[0]
-            key_drop = source_rgb[spill_index].point(
-                lambda value: _clamp_channel(
-                    255 * (1.0 - value / max(1.0, key[spill_index]))
-                )
+        # 对均匀色键，最大 RGB 距离就是可恢复的 alpha 线索。旧的色度分支会把
+        # 洋红（R == B）等合法前景误判成中性背景，并把 alpha 放大至不透明。
+        lower = transparent_threshold
+        upper = opaque_threshold
+        if upper <= lower:
+            matte = distance.point(lambda value: 0 if value <= lower else 255)
+        else:
+            matte = distance.point(
+                lambda value: 0
+                if value <= lower
+                else 255
+                if value >= upper
+                else _clamp_channel(255 * (value - lower) / (upper - lower))
             )
-            consistency = ImageChops.difference(key_drop, high)
-            spread_mask = spread.point(
-                lambda value: 255 if value > KEY_DOMINANCE_THRESHOLD else 0
-            )
-            consistency_mask = consistency.point(
-                lambda value: 255 if value <= KEY_DOMINANCE_THRESHOLD else 0
-            )
-            colored_mask = ImageChops.multiply(spread_mask, consistency_mask)
-            colored_matte = ImageChops.lighter(key_drop, high)
-            matte = Image.composite(colored_matte, neutral_matte, colored_mask)
     else:
         matte = hard_matte
 
@@ -239,25 +207,17 @@ def _apply_alpha_to_image(
     safe_alpha = matte.point(lambda value: max(1, value))
     recovered_rgb = []
     for band, key_channel in zip(source_rgb, key):
+        # (channel * 255 - (255 - alpha) * key) / alpha，需要保留符号，
+        # 因此用 ImageMath 处理而不是对负值截断的 ImageChops。
         recovered = ImageMath.lambda_eval(
-            lambda args, key_channel=key_channel: (
-                args["channel"] * 255 - (255 - args["alpha"]) * key_channel
+            lambda values, key_channel=key_channel: (
+                values["channel"] * 255 - (255 - values["alpha"]) * key_channel
             )
-            / args["alpha"],
+            / values["alpha"],
             channel=band,
             alpha=safe_alpha,
         ).convert("L")
         recovered_rgb.append(recovered)
-
-    if spill_cleanup:
-        spill = _spill_channels(key)
-        other = [index for index in range(3) if index not in spill]
-        if other:
-            cap = recovered_rgb[other[0]]
-            for index in other[1:]:
-                cap = ImageChops.lighter(cap, recovered_rgb[index])
-            for index in spill:
-                recovered_rgb[index] = ImageChops.darker(recovered_rgb[index], cap)
 
     output_rgb = [
         Image.composite(recovered, original, partial_mask)
@@ -275,6 +235,21 @@ def _apply_alpha_to_image(
         source_alpha=source_alpha,
         chroma_matte=matte,
     )
+    if spill_cleanup:
+        spill = _spill_channels(key)
+        other = [index for index in range(3) if index not in spill]
+        if other:
+            output_bands = list(image.convert("RGB").split())
+            cap = output_bands[other[0]]
+            for index in other[1:]:
+                cap = ImageChops.lighter(cap, output_bands[index])
+            partial_alpha = image.getchannel("A").point(
+                lambda value: 255 if 0 < value < 255 else 0
+            )
+            for index in spill:
+                despilled = ImageChops.darker(output_bands[index], cap)
+                output_bands[index] = Image.composite(despilled, output_bands[index], partial_alpha)
+            image.paste(Image.merge("RGBA", (*output_bands, image.getchannel("A"))))
     final_histogram = image.getchannel("A").histogram()
     return ChromaStats(
         total=image.width * image.height,
@@ -356,18 +331,18 @@ def _corner_sample_groups(image):
 def _dominant_sample(samples: list[Color], min_share: float) -> Color | None:
     if not samples:
         return None
-    buckets = Counter(
-        tuple(channel // AUTO_KEY_QUANTIZATION for channel in sample)
-        for sample in samples
+    # 直接按距离寻找最大簇，避免 239/240 这样仅差 1 的像素因量化桶边界被拆成两峰。
+    step = max(1, len(samples) // 256)
+    candidates = samples[::step]
+    candidate = max(
+        candidates,
+        key=lambda value: sum(
+            _channel_distance(sample, value) <= AUTO_KEY_CLUSTER_RADIUS for sample in samples
+        ),
     )
-    dominant_bucket, bucket_count = buckets.most_common(1)[0]
-    if bucket_count / len(samples) < min_share:
+    members = [sample for sample in samples if _channel_distance(sample, candidate) <= AUTO_KEY_CLUSTER_RADIUS]
+    if len(members) / len(samples) < min_share:
         return None
-    members = [
-        sample
-        for sample in samples
-        if tuple(channel // AUTO_KEY_QUANTIZATION for channel in sample) == dominant_bucket
-    ]
     center = tuple(round(median(sample[channel] for sample in members)) for channel in range(3))
     return min(members, key=lambda sample: _channel_distance(sample, center))
 
@@ -434,6 +409,7 @@ def _validate_encoded_image(data: bytes, suffix: str, expected_size: tuple[int, 
 def _atomic_write(output: Path, data: bytes, *, force: bool) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
+    created_target = False
     try:
         with tempfile.NamedTemporaryFile(dir=output.parent, prefix=f".{output.name}.", delete=False) as handle:
             temporary = Path(handle.name)
@@ -452,9 +428,11 @@ def _atomic_write(output: Path, data: bytes, *, force: bool) -> None:
                 # 不支持硬链接的文件系统（exFAT、部分网络盘）退化为排他创建。
                 try:
                     with output.open("xb") as target:
+                        created_target = True
                         target.write(data)
                         target.flush()
                         os.fsync(target.fileno())
+                    created_target = False
                 except FileExistsError:
                     _die(f"输出已存在，未覆盖：{output}")
                 except OSError as error:
@@ -466,6 +444,11 @@ def _atomic_write(output: Path, data: bytes, *, force: bool) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+        if created_target:
+            try:
+                output.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _remove_chroma_key(args: argparse.Namespace) -> None:
@@ -541,8 +524,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--auto-key", choices=("none", "corners", "border"), default="none", help="从四角或完整边框自动取色")
     parser.add_argument("--tolerance", type=int, default=12, help="hard key 通道容差 0-255，默认 12")
     parser.add_argument("--soft-matte", action="store_true", help="生成连续 soft matte 并恢复 partial RGB")
-    parser.add_argument("--transparent-threshold", type=float, default=12.0, help="兼容参数；soft matte 使用色度模型，不再以距离阈值估算 alpha")
-    parser.add_argument("--opaque-threshold", type=float, default=96.0, help="兼容参数；soft matte 使用色度模型，不再以距离阈值估算 alpha")
+    parser.add_argument(
+        "--transparent-threshold",
+        type=float,
+        default=0.0,
+        help="soft matte 中完全透明的最大键色距离，默认 0",
+    )
+    parser.add_argument(
+        "--opaque-threshold",
+        type=float,
+        default=255.0,
+        help="soft matte 中完全不透明的最小键色距离，默认 255",
+    )
     parser.add_argument("--edge-contract", type=int, default=0, help="向内收缩 matte 0-16 pixels")
     parser.add_argument("--edge-feather", type=float, default=0.0, help="仅向主体内侧柔化 matte，radius 0-64")
     parser.add_argument("--border-connected", action="store_true", help="仅移除与图片边框连通的键色区域")

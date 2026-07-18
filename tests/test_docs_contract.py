@@ -128,7 +128,7 @@ def test_claude_path_substitutions_are_scoped_to_rendered_skill():
 def test_powershell_reference_commands_use_initialized_local_paths():
     cli = (SKILL_ROOT / "references" / "cli.md").read_text(encoding="utf-8")
     chroma = (SKILL_ROOT / "references" / "chroma-key.md").read_text(encoding="utf-8")
-    assert cli.count('python "$skillDir\\scripts\\image_gen.py"') == 4
+    assert cli.count('python "$skillDir\\scripts\\image_gen.py"') == 5
     assert 'python "$skillDir\\scripts\\remove_chroma_key.py"' in chroma
     for text in (cli, chroma):
         assert "已渲染" in text
@@ -459,5 +459,5 @@ def test_external_prompt_file_command_without_flag_is_not_implicit_dry_run():
         assert completed.returncode == 1
         assert "ARK_API_KEY 为空" in completed.stderr
         assert '"endpoint"' not in completed.stdout
-        assert not prompt.exists()
+        assert prompt.exists()
         assert not output.exists()

@@ -12,7 +12,7 @@
   <strong>English</strong> · <a href="README-zh.md">简体中文</a>
 </p>
 
-A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, request-state recovery, atomic saves, Lite image sets, and optional chroma-key conversion.
+A Claude Code skill for generating and editing raster images with Doubao Seedream 5.0 Lite or Pro through Volcengine Ark. It uses one validated Python CLI for model checks, free dry-runs, payload-level request locks, atomic saves, Lite image sets, and optional chroma-key conversion.
 
 ## Features
 
@@ -102,9 +102,9 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude Code resolves the skill and project roots while rendering `SKILL.md`; supporting reference files use the resulting local `$skillDir` / `$projectDir` variables instead of raw substitution tokens. Agent prompt files use `.seedream-prompt-<random-id>.txt` in the project root; real generation cleans the file on either success or failure, while dry-run retains it for the real request. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
+Claude Code resolves the skill and project roots while rendering `SKILL.md`; supporting reference files use the resulting local `$skillDir` / `$projectDir` variables instead of raw substitution tokens. Agent prompt files use `.seedream-prompt-<random-id>.txt` in the project root; real generation cleans the file only after creating its submission state, while dry-run and pre-submission failures retain it for correction. Payload locks live in `$projectDir/.seedream-requests/` and can be inspected with `state --project-dir`. Real generation may incur charges. Never delete state or retry a `pending` or `ambiguous` request without checking output and billing first.
 
-`--dry-run` runs only when explicitly supplied; it is not the default for ordinary generation. When web access is needed and no model was selected, use Lite directly. Enable `--web-search` when the user or prompt explicitly requests it or when a recent dated world-situation task depends on current facts; that flag alone does not require dry-run. If web access and Pro capabilities are both explicitly requested, ask the user to choose one.
+`--dry-run` runs only when explicitly supplied; it is not the default for ordinary generation and hides prompts, Base64, and remote URLs by default. Unspecified single images always go to `$projectDir/` with content-derived prompt names; Lite image sets always go to `$projectDir/images/`. `--private-filenames` is off by default and may be used only when the user or prompt explicitly requests hidden content; it switches to a hash name, not a random name. News, weather, market data, sensitive images, and personal data are sent to Ark only with the user's data-processing consent; verify facts outside the model. If web access and Pro capabilities are both explicitly requested, ask the user to choose one.
 
 ## Model boundaries
 

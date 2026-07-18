@@ -13,7 +13,7 @@
   <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 
-面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、请求状态恢复、原子保存、Lite 组图和可选色键转透明。
+面向 Claude Code 的 Doubao Seedream 5.0 Lite / Pro 生图 skill，通过火山方舟 Ark 生成和编辑位图。项目统一使用一套受校验的 Python CLI，覆盖模型校验、免费 dry-run、payload 级请求状态锁、原子保存、Lite 组图和可选色键转透明。
 
 ## 功能
 
@@ -103,9 +103,9 @@ python "$skillDir\scripts\image_gen.py" generate --model lite `
   --out "$projectDir\output\cat.png" --dry-run
 ```
 
-Claude Code 渲染 `SKILL.md` 时解析 skill 与项目根目录；后续参考文件使用得到的本地 `$skillDir` / `$projectDir`，不传递原始字符串替换。agent prompt 临时文件使用项目根目录 `.seedream-prompt-<random-id>.txt`；真实生成无论成功或失败都会清理该文件，dry-run 保留供真实请求复用。真实生图可能计费；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
+Claude Code 渲染 `SKILL.md` 时解析 skill 与项目根目录；后续参考文件使用得到的本地 `$skillDir` / `$projectDir`，不传递原始字符串替换。agent prompt 临时文件使用项目根目录 `.seedream-prompt-<random-id>.txt`；真实生成在创建提交状态后无论成功或失败都会清理该文件，dry-run 和提交前失败保留供修正复用。真实生图可能计费；状态按 payload 存于 `$projectDir/.seedream-requests/`，可用 `state --project-dir` 查看；遇到 `pending` 或 `ambiguous` 时先核对输出与计费，不得删除状态或自动重试。
 
-`--dry-run` 只在显式传参时执行，不是普通生成的默认步骤。需要联网且未指定模型时直接使用 Lite；用户或 prompt 明确要求联网，以及带有具体近期日期的世界局势等时效任务，都启用 `--web-search`，该参数本身不强制要求 dry-run。联网与 Pro 能力同时被明确要求时，应先让用户二选一。
+`--dry-run` 只在显式传参时执行，不是普通生成的默认步骤，且默认隐藏 prompt、Base64 和远程 URL。未指定输出时文件固定保存到 `$projectDir/`，并使用与 prompt 内容相关的文件名；Lite 组图固定保存到 `$projectDir/images/`。`--private-filenames` 默认关闭，只有用户或 prompt 明确要求隐藏内容时才使用 hash 名。需要联网且未指定模型时直接使用 Lite；新闻、天气、行情、敏感图片或个人信息将发送至 Ark，必须先取得数据处理同意并在外部核验事实。联网与 Pro 能力同时被明确要求时，应先让用户二选一。
 
 ## 模型边界
 

@@ -28,4 +28,4 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q skills/imagegen/scripts tests
       - name: Check whitespace
-        run: git diff --check
+        run: git diff --check "$(git rev-list --max-parents=0 HEAD)" HEAD

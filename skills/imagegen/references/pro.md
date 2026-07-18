@@ -30,7 +30,7 @@
 
 ## Payload 约束
 
-通用字段：`model`、`prompt`、`image`、`size`、`seed`、`guidance_scale`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须标明图一、图二的角色及编辑不变项。
+通用字段：`model`、`prompt`、`image`、`size`、`response_format`、`output_format`、`watermark`。单图时 `image` 为字符串，多图时为按顺序传入的数组；prompt 必须标明图一、图二的角色及编辑不变项。CLI 不发送 Seedream 5 不支持的 `seed` 或 `guidance_scale`。
 
 默认 `output_format` 为 PNG；`response_format` 为 `url` 或 `b64_json`。不得出现 `sequential_image_generation`、`sequential_image_generation_options`、`stream` 或 `tools`。最新事实由 Claude 外部检索后写入 prompt，不得声称 Pro 原生联网。
 

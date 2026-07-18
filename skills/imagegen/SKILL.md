@@ -55,7 +55,7 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 - 没有输入图片时使用 `generate`。
 - 多图融合通常使用 `generate --image`；只有以某张现有图为基础并保持其未编辑区域时才使用 `edit`。
 - 单资产默认单图、非流式；Lite 组图只用于用户明确要求的一组连续图片，不要把不同资产塞入同一组图请求。
-- `web_search`、stream 和组图只可用于 Lite。Pro 需要最新事实时，先由外部检索核实并写入 prompt，不得声称 Pro 原生联网。
+- `web_search`、stream 和组图只可用于 Lite。`--web-search` 仅请求模型侧检索，不提供可引用来源；需要事实准确性时仍须由 agent 外部核实并写入 prompt。新闻、天气、行情、敏感图片或个人信息会发送至 Ark：先取得用户的数据处理同意，最小化 prompt/图片内容，不能把成图当作事实证明。Pro 需要最新事实时，先由外部检索核实并写入 prompt，不得声称 Pro 原生联网。
 
 每张输入图均按 `--image` 顺序标明角色：`编辑目标`、`内容来源`、`风格参考` 或 `交互标记图`；称为图一、图二……，不依赖文件名猜测角色。
 
@@ -78,7 +78,7 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 
 - Prompt 跟随用户主要输入文本的语言；混合或不明确时沿用对话与用户语言习惯，逐字文字保持原文。完整编写规则见 [Prompt 与验收](references/prompting.md)，需要可复制结构时看 [Prompt 模板](references/sample-prompts.md)。
 - 多行或含引号的 prompt 写入项目根目录 `.seedream-prompt-<random-id>.txt`；ID 使用 6–64 位 ASCII 字母、数字、`_` 或 `-`，首字符须为字母或数字，不含 prompt 摘要。传 `--prompt-file --cleanup-prompt-file`，每次改写使用新文件。
-- 始终根据项目根目录传入绝对 `--out` 或 `--out-dir`。单图默认保存到项目根目录，Lite 组图默认保存到 `images/`；默认名冲突时追加 `-v2`、`-v3`。显式目标不得覆盖，只有用户明确允许时使用 `--force`。
+- 始终传入 `--project-dir "$projectDir"`，并根据项目根目录传入绝对 `--out` 或 `--out-dir`。默认单图固定保存到项目根目录，Lite 组图固定保存到 `images/`；默认文件名使用 prompt 的内容 slug，冲突时追加 `-v2`、`-v3`。只有用户或 prompt 明确要求隐藏内容时才传 `--private-filenames`，改用 hash 名；不得自行开启，也不使用随机名或其他目录。显式目标不得覆盖，只有用户明确允许时使用 `--force`。非流式组图必须使用 URL 响应，避免 Base64 聚合内存风险；组图默认要求恰好返回请求数量，只有用户接受缺图时传 `--allow-partial-group`。
 - `--dry-run` 不是默认步骤。只在组图、stream、多参考图、自定义尺寸、显式 `--allow-model-fallback`、已有输出或覆盖风险时先执行；普通 2K 单图、`--prompt-file`、`--cleanup-prompt-file` 和 `--web-search` 本身不要求 dry-run。
 - 重要文字必须逐字核对；不合格时优先建议确定性后期排版。交付前用实际观察验收，不用 prompt 复述代替检查。
 
@@ -87,7 +87,7 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 - 真实请求结束后，CLI 清理本次显式标记的 agent prompt；dry-run 保留供后续真实请求使用。
 - 只允许清理由 agent 创建且符合命名规则的 prompt 文件。不得删除用户输入、用户 prompt、生成原图、最终图片、显式输出目录内容或请求状态文件；色键源图只有在它是 agent 创建的工作副本且另有可恢复原件时才能清理。
 - `pending` 或 `ambiguous` 必须停止并请用户核实输出与计费，不得自动重试、删除状态或仅凭用户同意绕过状态锁。即使 stderr 提到 HTTP 400、内容审核、敏感内容，只要状态仍为 `pending`/`ambiguous` 就不得认定未计费；只有 CLI 按明确拒绝 allowlist 删除状态后才可继续。
-- 状态文件是唯一重试依据。超时、中断、断连或保存不确定时先检查输出和对应 `.seedream-request.json`；默认组图状态按 prompt 隔离，避免不同组图互相阻塞。
+- 状态文件按请求 payload 指纹存于 `$projectDir/.seedream-requests/`，因此改 `--out` 不能绕过状态锁。超时、中断、断连或保存不确定时先运行 `image_gen.py state --project-dir "$projectDir"` 检查；同步 API 不可安全续传，仍需用户核实后自行决定后续处置。
 - 配置优先级为进程环境、skill-local `.env`、CLI 默认值；Model ID 覆盖不改变对应 Pro/Lite 的本地能力校验。不得要求用户在对话中提供 `ARK_API_KEY`，也不得打印密钥、Base64 输入图、签名 URL 或未经脱敏的 API 响应。
 - 生成图片、`images/`、`output/`、缓存、`.env` 和请求状态文件不得提交 Git。
 
@@ -97,6 +97,7 @@ project_dir="${CLAUDE_PROJECT_DIR}"
 
 - [Prompt 与验收](references/prompting.md)：分类、结构、文字、参考图、编辑、透明背景与验收规则。
 - [Prompt 模板](references/sample-prompts.md)：生成、编辑、标记、组图、联网和透明背景的结构化模板。
+- [能力来源清单](references/capability-manifest.md)：官方来源锚点与发布前复核要求。
 - [视觉示例](references/visual-examples.md)：四类可选视觉参考、完整 prompt 与引用限制。只有用户需要相应方向时读取；不得默认把 `assets/examples/` 注入请求或照搬主体、场景、构图和文字。
 - [CLI 参考](references/cli.md)：配置、参数、输入输出、dry-run、保存与失败恢复。
 - [色键参考](references/chroma-key.md)：色键参数、alpha 契约、停止条件与交付检查。模型不能稳定直接输出透明 alpha；毛发、玻璃、烟雾、液体、反光、软阴影或半透明主体不适合简单色键。
